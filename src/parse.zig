@@ -67,6 +67,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return .clear;
     }
 
+    // Weekday with modifier: "next monday", "last friday"
+    if (parseWeekdayModifier(lower, reference)) |date| {
+        return .{ .date = date };
+    }
+
     // Relative keywords
     if (std.mem.eql(u8, lower, "today")) {
         return .{ .date = reference };
@@ -175,6 +180,47 @@ fn nextWeekday(from: Date, target_dow: u8) Date {
         days_ahead += 7;
     }
     return addDaysInternal(from, days_ahead);
+}
+
+/// Find most recent past occurrence of target weekday (always in past, 1-7 days back).
+fn lastWeekday(from: Date, target_dow: u8) Date {
+    const current_dow = dayOfWeek(from);
+    var days_back: i32 = @as(i32, current_dow) - @as(i32, target_dow);
+    if (days_back <= 0) {
+        days_back += 7;
+    }
+    return addDaysInternal(from, -days_back);
+}
+
+/// Parse "next <weekday>" or "last <weekday>"
+fn parseWeekdayModifier(str: []const u8, reference: Date) ?Date {
+    // Try "next <weekday>"
+    if (std.mem.startsWith(u8, str, "next ")) {
+        const weekday_str = str[5..];
+        if (parseWeekday(weekday_str)) |target_dow| {
+            // "next monday" means the Monday in "next week" (the week after this one)
+            // If target is strictly ahead in current week, add 7 to skip to next week
+            // If target is same day or behind, nextWeekday already returns next week
+            const current_dow = dayOfWeek(reference);
+            const next = nextWeekday(reference, target_dow);
+            if (target_dow > current_dow) {
+                // Target is ahead this week, so nextWeekday returns this week's occurrence
+                // Add 7 to get next week's occurrence
+                return addDaysInternal(next, 7);
+            }
+            return next;
+        }
+    }
+
+    // Try "last <weekday>"
+    if (std.mem.startsWith(u8, str, "last ")) {
+        const weekday_str = str[5..];
+        if (parseWeekday(weekday_str)) |target_dow| {
+            return lastWeekday(reference, target_dow);
+        }
+    }
+
+    return null;
 }
 
 const OffsetUnit = enum { day, week, month, year };
@@ -462,4 +508,42 @@ test "parse '+2y' adds years" {
     const ref = Date.initUnchecked(2024, 6, 15);
     const result = try parseWithReference("+2y", ref);
     try std.testing.expectEqual(Date.initUnchecked(2026, 6, 15), result.date);
+}
+
+test "parse 'next monday' skips to following week" {
+    // Reference: Monday Jan 15, 2024
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("next monday", ref);
+    // Should skip this week's Monday (today) and go to next Monday
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 22), result.date);
+}
+
+test "parse 'next friday' from Monday" {
+    const ref = Date.initUnchecked(2024, 1, 15); // Monday
+    const result = try parseWithReference("next friday", ref);
+    // Next Friday after skipping this week = Jan 26
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 26), result.date);
+}
+
+test "parse 'last monday' returns previous Monday" {
+    // Reference: Wednesday Jan 17, 2024
+    const ref = Date.initUnchecked(2024, 1, 17);
+    const result = try parseWithReference("last monday", ref);
+    // Previous Monday is Jan 15
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.date);
+}
+
+test "parse 'last monday' on Monday returns week before" {
+    // Reference: Monday Jan 15, 2024
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("last monday", ref);
+    // Previous Monday is Jan 8
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 8), result.date);
+}
+
+test "parse 'last friday' from Monday" {
+    const ref = Date.initUnchecked(2024, 1, 15); // Monday
+    const result = try parseWithReference("last friday", ref);
+    // Last Friday is Jan 12
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 12), result.date);
 }
