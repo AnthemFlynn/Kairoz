@@ -177,15 +177,21 @@ fn nextWeekday(from: Date, target_dow: u8) Date {
     return addDaysInternal(from, days_ahead);
 }
 
-const OffsetUnit = enum { day, week, month };
-const Offset = struct { value: u32, unit: OffsetUnit };
+const OffsetUnit = enum { day, week, month, year };
+const Offset = struct { value: u32, unit: OffsetUnit, sign: i32 };
 
-/// Parse forward offset format: +Nd, +Nw, +Nm
+/// Parse offset format: +Nd, +Nw, +Nm, +Ny, -Nd, -Nw, -Nm, -Ny
 fn parseOffset(str: []const u8) (ParseError)!Offset {
-    // Must start with +
-    if (str.len < 3 or str[0] != '+') return error.InvalidFormat;
+    if (str.len < 3) return error.InvalidFormat;
 
-    // Check for invalid characters after + (like +-)
+    // Must start with + or -
+    const sign: i32 = switch (str[0]) {
+        '+' => 1,
+        '-' => -1,
+        else => return error.InvalidFormat,
+    };
+
+    // Check for invalid characters after sign (like +-)
     if (str[1] == '-' or str[1] == '+') return error.InvalidFormat;
 
     // Extract unit from last character
@@ -194,10 +200,11 @@ fn parseOffset(str: []const u8) (ParseError)!Offset {
         'd' => .day,
         'w' => .week,
         'm' => .month,
+        'y' => .year,
         else => return error.InvalidFormat,
     };
 
-    // Parse the number between + and unit
+    // Parse the number between sign and unit
     const num_str = str[1 .. str.len - 1];
     if (num_str.len == 0) return error.InvalidFormat;
 
@@ -206,15 +213,17 @@ fn parseOffset(str: []const u8) (ParseError)!Offset {
     // Zero offset is invalid
     if (value == 0) return error.InvalidOffset;
 
-    return .{ .value = value, .unit = unit };
+    return .{ .value = value, .unit = unit, .sign = sign };
 }
 
 /// Apply offset to date
 fn applyOffset(date: Date, offset: Offset) ArithmeticError!Date {
+    const signed_value: i32 = @as(i32, @intCast(offset.value)) * offset.sign;
     return switch (offset.unit) {
-        .day => addDaysInternal(date, @intCast(offset.value)),
-        .week => addDaysInternal(date, @intCast(offset.value * 7)),
-        .month => arithmetic.addMonths(date, @intCast(offset.value)),
+        .day => addDaysInternal(date, signed_value),
+        .week => addDaysInternal(date, signed_value * 7),
+        .month => arithmetic.addMonths(date, signed_value),
+        .year => arithmetic.addYears(date, signed_value),
     };
 }
 
@@ -412,4 +421,45 @@ test "Period.end returns Dec 31 for year granularity" {
     };
     const end_date = period.end();
     try std.testing.expectEqual(Date.initUnchecked(2024, 12, 31), end_date);
+}
+
+test "parse '-3d' subtracts days" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("-3d", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 12), result.date);
+}
+
+test "parse '-2w' subtracts weeks" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("-2w", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.date);
+}
+
+test "parse '-1m' subtracts months" {
+    const ref = Date.initUnchecked(2024, 2, 15);
+    const result = try parseWithReference("-1m", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.date);
+}
+
+test "parse '-1y' subtracts years" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("-1y", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2023, 6, 15), result.date);
+}
+
+test "parse '-0d' returns InvalidOffset" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    try std.testing.expectError(error.InvalidOffset, parseWithReference("-0d", ref));
+}
+
+test "parse '+1y' adds years" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("+1y", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 6, 15), result.date);
+}
+
+test "parse '+2y' adds years" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("+2y", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2026, 6, 15), result.date);
 }
