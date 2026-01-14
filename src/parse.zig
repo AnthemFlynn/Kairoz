@@ -45,6 +45,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return .{ .date = addDaysInternal(reference, -1) };
     }
 
+    // Weekday names
+    if (parseWeekday(lower)) |target_dow| {
+        return .{ .date = nextWeekday(reference, target_dow) };
+    }
+
     return error.InvalidFormat;
 }
 
@@ -84,6 +89,43 @@ fn epochDaysToDate(epoch_day: i32) Date {
     const m: u8 = if (mp < 10) @intCast(mp + 3) else @intCast(mp - 9);
     const year: u16 = @intCast(if (m <= 2) y + 1 else y);
     return Date.initUnchecked(year, m, d);
+}
+
+/// Parse weekday name, returns 0-6 (Mon-Sun) or null.
+fn parseWeekday(name: []const u8) ?u8 {
+    const weekdays = [_]struct { full: []const u8, abbrev: []const u8, dow: u8 }{
+        .{ .full = "monday", .abbrev = "mon", .dow = 0 },
+        .{ .full = "tuesday", .abbrev = "tue", .dow = 1 },
+        .{ .full = "wednesday", .abbrev = "wed", .dow = 2 },
+        .{ .full = "thursday", .abbrev = "thu", .dow = 3 },
+        .{ .full = "friday", .abbrev = "fri", .dow = 4 },
+        .{ .full = "saturday", .abbrev = "sat", .dow = 5 },
+        .{ .full = "sunday", .abbrev = "sun", .dow = 6 },
+    };
+    for (weekdays) |wd| {
+        if (std.mem.eql(u8, name, wd.full) or std.mem.eql(u8, name, wd.abbrev)) {
+            return wd.dow;
+        }
+    }
+    return null;
+}
+
+/// Get day of week for date (0=Mon, 6=Sun).
+fn dayOfWeek(date: Date) u8 {
+    const epoch_days = dateToEpochDays(date);
+    // Jan 1, 1970 was Thursday (3)
+    const dow = @mod(epoch_days + 3, 7);
+    return @intCast(if (dow < 0) dow + 7 else dow);
+}
+
+/// Find next occurrence of target weekday (always in future, 1-7 days ahead).
+fn nextWeekday(from: Date, target_dow: u8) Date {
+    const current_dow = dayOfWeek(from);
+    var days_ahead: i32 = @as(i32, target_dow) - @as(i32, current_dow);
+    if (days_ahead <= 0) {
+        days_ahead += 7;
+    }
+    return addDaysInternal(from, days_ahead);
 }
 
 // ============ TESTS ============
@@ -135,4 +177,47 @@ test "parse empty string returns error" {
     const ref = Date.initUnchecked(2024, 1, 15);
     try std.testing.expectError(error.InvalidFormat, parseWithReference("", ref));
     try std.testing.expectError(error.InvalidFormat, parseWithReference("   ", ref));
+}
+
+test "parse 'monday' returns next monday" {
+    // Reference: Wednesday Jan 15, 2024
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("monday", ref);
+    // Next Monday is Jan 22, 2024 (7 days ahead)
+    try std.testing.expectEqual(@as(u8, 22), result.date.day);
+    try std.testing.expectEqual(@as(u8, 1), result.date.month);
+}
+
+test "parse 'friday' returns next friday" {
+    // Reference: Wednesday Jan 15, 2024
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("friday", ref);
+    // Next Friday is Jan 19, 2024 (4 days ahead)
+    try std.testing.expectEqual(@as(u8, 19), result.date.day);
+}
+
+test "parse weekday abbreviations" {
+    const ref = Date.initUnchecked(2024, 1, 15); // Wednesday
+    _ = try parseWithReference("mon", ref);
+    _ = try parseWithReference("tue", ref);
+    _ = try parseWithReference("wed", ref);
+    _ = try parseWithReference("thu", ref);
+    _ = try parseWithReference("fri", ref);
+    _ = try parseWithReference("sat", ref);
+    _ = try parseWithReference("sun", ref);
+}
+
+test "parse same weekday returns next week" {
+    // Reference: Monday Jan 15, 2024
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("monday", ref);
+    // Same day should return next week (7 days)
+    try std.testing.expectEqual(@as(u8, 22), result.date.day);
+}
+
+test "dayOfWeek calculation" {
+    // Jan 15, 2024 is Monday
+    try std.testing.expectEqual(@as(u8, 0), dayOfWeek(Date.initUnchecked(2024, 1, 15)));
+    // Jan 1, 1970 is Thursday
+    try std.testing.expectEqual(@as(u8, 3), dayOfWeek(Date.initUnchecked(1970, 1, 1)));
 }
