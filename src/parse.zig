@@ -122,12 +122,8 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         // Otherwise (InvalidFormat), try other parsers
     }
 
-    // Absolute dates: YYYY-MM-DD, MM-DD, DD (use original trimmed, not lowercase)
-    if (parseAbsoluteDate(trimmed, reference)) |date| {
-        return .{ .date = date };
-    } else |err| {
-        return err;
-    }
+    // Absolute dates: YYYY-MM-DD, MM-DD, DD, YYYY (use original trimmed, not lowercase)
+    return parseAbsoluteDate(trimmed, reference);
 }
 
 fn toLower(str: []const u8, buf: []u8) []const u8 {
@@ -142,21 +138,40 @@ fn addDaysInternal(date: Date, days: i32) Date {
     return epochDaysToDate(dateToEpochDays(date) + days);
 }
 
-/// Parse absolute date formats: YYYY-MM-DD, MM-DD, DD
-fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)!Date {
+/// Parse absolute date formats: YYYY-MM-DD, MM-DD, DD, YYYY
+fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)!ParsedDate {
     // Check for YYYY-MM-DD format (length 10, dashes at positions 4 and 7)
     if (str.len == 10 and str[4] == '-' and str[7] == '-') {
         const year = std.fmt.parseInt(u16, str[0..4], 10) catch return error.InvalidFormat;
         const month = std.fmt.parseInt(u8, str[5..7], 10) catch return error.InvalidFormat;
         const day = std.fmt.parseInt(u8, str[8..10], 10) catch return error.InvalidFormat;
-        return Date.init(year, month, day);
+        return .{ .date = try Date.init(year, month, day) };
     }
 
     // Check for MM-DD format (length 5, dash at position 2)
     if (str.len == 5 and str[2] == '-') {
         const month = std.fmt.parseInt(u8, str[0..2], 10) catch return error.InvalidFormat;
         const day = std.fmt.parseInt(u8, str[3..5], 10) catch return error.InvalidFormat;
-        return Date.init(reference.year, month, day);
+        return .{ .date = try Date.init(reference.year, month, day) };
+    }
+
+    // Check for YYYY format (4 digits, all numeric) - returns period
+    if (str.len == 4) {
+        var all_digits = true;
+        for (str) |c| {
+            if (!std.ascii.isDigit(c)) {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) {
+            const year = std.fmt.parseInt(u16, str, 10) catch return error.InvalidFormat;
+            if (year == 0) return error.InvalidYear;
+            return .{ .period = .{
+                .start = Date.initUnchecked(year, 1, 1),
+                .granularity = .year,
+            } };
+        }
     }
 
     // Check for DD format (length 1-2, all digits)
@@ -166,7 +181,7 @@ fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)
             if (!std.ascii.isDigit(c)) return error.InvalidFormat;
         }
         const day = std.fmt.parseInt(u8, str, 10) catch return error.InvalidFormat;
-        return Date.init(reference.year, reference.month, day);
+        return .{ .date = try Date.init(reference.year, reference.month, day) };
     }
 
     return error.InvalidFormat;
@@ -1029,4 +1044,23 @@ test "parse '11th' works" {
     const ref = Date.initUnchecked(2024, 6, 15);
     const result = try parseWithReference("11th", ref);
     try std.testing.expectEqual(Date.initUnchecked(2024, 6, 11), result.date);
+}
+
+test "parse '2024' as year period" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("2024", ref);
+    try std.testing.expectEqual(Granularity.year, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.period.start);
+}
+
+test "parse '2025' as year period" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("2025", ref);
+    try std.testing.expectEqual(Granularity.year, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 1, 1), result.period.start);
+}
+
+test "parse '0000' as year returns InvalidYear" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    try std.testing.expectError(error.InvalidYear, parseWithReference("0000", ref));
 }
