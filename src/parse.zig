@@ -7,6 +7,7 @@ const DateError = DateMod.DateError;
 const today_fn = DateMod.today;
 const dateToEpochDays = DateMod.dateToEpochDays;
 const epochDaysToDate = DateMod.epochDaysToDate;
+const daysInMonth = DateMod.daysInMonth;
 
 pub const ParseError = error{
     InvalidFormat,
@@ -53,7 +54,12 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return .{ .date = nextWeekday(reference, target_dow) };
     }
 
-    return error.InvalidFormat;
+    // Forward offsets: +Nd, +Nw, +Nm
+    if (parseOffset(lower)) |offset| {
+        return .{ .date = applyOffset(reference, offset) };
+    } else |err| {
+        return err;
+    }
 }
 
 fn toLower(str: []const u8, buf: []u8) []const u8 {
@@ -101,6 +107,61 @@ fn nextWeekday(from: Date, target_dow: u8) Date {
         days_ahead += 7;
     }
     return addDaysInternal(from, days_ahead);
+}
+
+const OffsetUnit = enum { day, week, month };
+const Offset = struct { value: u32, unit: OffsetUnit };
+
+/// Parse forward offset format: +Nd, +Nw, +Nm
+fn parseOffset(str: []const u8) (ParseError)!Offset {
+    // Must start with +
+    if (str.len < 3 or str[0] != '+') return error.InvalidFormat;
+
+    // Check for invalid characters after + (like +-)
+    if (str[1] == '-' or str[1] == '+') return error.InvalidFormat;
+
+    // Extract unit from last character
+    const unit_char = str[str.len - 1];
+    const unit: OffsetUnit = switch (unit_char) {
+        'd' => .day,
+        'w' => .week,
+        'm' => .month,
+        else => return error.InvalidFormat,
+    };
+
+    // Parse the number between + and unit
+    const num_str = str[1 .. str.len - 1];
+    if (num_str.len == 0) return error.InvalidFormat;
+
+    const value = std.fmt.parseInt(u32, num_str, 10) catch return error.InvalidFormat;
+
+    // Zero offset is invalid
+    if (value == 0) return error.InvalidOffset;
+
+    return .{ .value = value, .unit = unit };
+}
+
+/// Apply offset to date
+fn applyOffset(date: Date, offset: Offset) Date {
+    return switch (offset.unit) {
+        .day => addDaysInternal(date, @intCast(offset.value)),
+        .week => addDaysInternal(date, @intCast(offset.value * 7)),
+        .month => addMonthsInternal(date, offset.value),
+    };
+}
+
+/// Add months to date with day clamping
+fn addMonthsInternal(date: Date, months: u32) Date {
+    const total_months = @as(u32, date.month) - 1 + months;
+    const years_to_add = total_months / 12;
+    const new_month: u8 = @intCast((total_months % 12) + 1);
+    const new_year: u16 = date.year + @as(u16, @intCast(years_to_add));
+
+    // Clamp day to valid range for new month
+    const max_day = daysInMonth(new_year, new_month);
+    const new_day = @min(date.day, max_day);
+
+    return Date.initUnchecked(new_year, new_month, new_day);
 }
 
 // ============ TESTS ============
@@ -195,4 +256,36 @@ test "dayOfWeek calculation" {
     try std.testing.expectEqual(@as(u8, 0), dayOfWeek(Date.initUnchecked(2024, 1, 15)));
     // Jan 1, 1970 is Thursday
     try std.testing.expectEqual(@as(u8, 3), dayOfWeek(Date.initUnchecked(1970, 1, 1)));
+}
+
+test "parse '+3d' adds days" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("+3d", ref);
+    try std.testing.expectEqual(@as(u8, 18), result.date.day);
+}
+
+test "parse '+2w' adds weeks" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("+2w", ref);
+    try std.testing.expectEqual(@as(u8, 29), result.date.day);
+}
+
+test "parse '+1m' adds months" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("+1m", ref);
+    try std.testing.expectEqual(@as(u8, 2), result.date.month);
+    try std.testing.expectEqual(@as(u8, 15), result.date.day);
+}
+
+test "parse '+1m' clamps day" {
+    const ref = Date.initUnchecked(2024, 1, 31);
+    const result = try parseWithReference("+1m", ref);
+    try std.testing.expectEqual(@as(u8, 29), result.date.day); // Feb 29, 2024 (leap year)
+}
+
+test "parse invalid offsets" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    try std.testing.expectError(error.InvalidOffset, parseWithReference("+0d", ref));
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("+d", ref));
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("+-3d", ref));
 }
