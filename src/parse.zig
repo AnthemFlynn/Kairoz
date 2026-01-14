@@ -26,6 +26,20 @@ pub const Granularity = enum {
 pub const Period = struct {
     start: Date,
     granularity: Granularity,
+
+    /// Compute the last day of this period
+    pub fn end(self: Period) Date {
+        return switch (self.granularity) {
+            .day => self.start,
+            .week => addDaysInternal(self.start, 6),
+            .month => Date.initUnchecked(
+                self.start.year,
+                self.start.month,
+                DateMod.daysInMonth(self.start.year, self.start.month),
+            ),
+            .year => Date.initUnchecked(self.start.year, 12, 31),
+        };
+    }
 };
 
 pub const ParsedDate = union(enum) {
@@ -359,4 +373,43 @@ test "parse invalid absolute dates" {
     try std.testing.expectError(error.InvalidMonth, parseWithReference("2024-13-01", ref));
     try std.testing.expectError(error.InvalidDay, parseWithReference("2024-01-32", ref));
     try std.testing.expectError(error.InvalidFormat, parseWithReference("2024-1-15", ref)); // not zero-padded
+}
+
+test "Period.end returns same day for day granularity" {
+    const period = Period{
+        .start = Date.initUnchecked(2024, 1, 15),
+        .granularity = .day,
+    };
+    const end_date = period.end();
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), end_date);
+}
+
+test "Period.end returns Sunday for week granularity" {
+    // Start on Monday Jan 15, 2024
+    const period = Period{
+        .start = Date.initUnchecked(2024, 1, 15),
+        .granularity = .week,
+    };
+    const end_date = period.end();
+    // End should be Sunday Jan 21, 2024 (+6 days)
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 21), end_date);
+}
+
+test "Period.end returns last day of month" {
+    const period = Period{
+        .start = Date.initUnchecked(2024, 2, 1),
+        .granularity = .month,
+    };
+    const end_date = period.end();
+    // Feb 2024 has 29 days (leap year)
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 29), end_date);
+}
+
+test "Period.end returns Dec 31 for year granularity" {
+    const period = Period{
+        .start = Date.initUnchecked(2024, 1, 1),
+        .granularity = .year,
+    };
+    const end_date = period.end();
+    try std.testing.expectEqual(Date.initUnchecked(2024, 12, 31), end_date);
 }
