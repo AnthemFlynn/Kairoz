@@ -18,8 +18,12 @@ pub const addMonths = @import("arithmetic.zig").addMonths;
 pub const daysBetween = @import("arithmetic.zig").daysBetween;
 pub const daysUntil = @import("arithmetic.zig").daysUntil;
 
+pub const formatRelative = @import("format.zig").formatRelative;
+pub const max_format_len = @import("format.zig").max_format_len;
+
 test {
     _ = @import("Date.zig");
     _ = @import("parse.zig");
     _ = @import("arithmetic.zig");
+    _ = @import("format.zig");
 }
