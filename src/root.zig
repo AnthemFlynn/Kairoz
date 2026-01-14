@@ -10,6 +10,8 @@ pub const daysInMonth = @import("Date.zig").daysInMonth;
 
 pub const ParsedDate = @import("parse.zig").ParsedDate;
 pub const ParseError = @import("parse.zig").ParseError;
+pub const Granularity = @import("parse.zig").Granularity;
+pub const Period = @import("parse.zig").Period;
 pub const parse = @import("parse.zig").parse;
 pub const parseWithReference = @import("parse.zig").parseWithReference;
 

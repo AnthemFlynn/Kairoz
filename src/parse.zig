@@ -16,8 +16,21 @@ pub const ParseError = error{
     InvalidOffset,
 };
 
+pub const Granularity = enum {
+    day,
+    week,
+    month,
+    year,
+};
+
+pub const Period = struct {
+    start: Date,
+    granularity: Granularity,
+};
+
 pub const ParsedDate = union(enum) {
     date: Date,
+    period: Period,
     clear,
 };
 
