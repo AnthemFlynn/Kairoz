@@ -1,15 +1,16 @@
 //! Date arithmetic operations.
 
 const std = @import("std");
-const Date = @import("Date.zig").Date;
-const daysInMonth = @import("Date.zig").daysInMonth;
-const today = @import("Date.zig").today;
+const DateMod = @import("Date.zig");
+const Date = DateMod.Date;
+const daysInMonth = DateMod.daysInMonth;
+const today = DateMod.today;
+const dateToEpochDays = DateMod.dateToEpochDays;
+const epochDaysToDate = DateMod.epochDaysToDate;
 
 /// Add (or subtract) days from a date.
 pub fn addDays(date: Date, days: i32) Date {
-    const epoch_days = dateToEpochDays(date);
-    const new_days = epoch_days + days;
-    return epochDaysToDate(new_days);
+    return epochDaysToDate(dateToEpochDays(date) + days);
 }
 
 /// Add (or subtract) months from a date. Day is clamped if it exceeds target month.
@@ -36,33 +37,6 @@ pub fn daysBetween(from: Date, to: Date) i32 {
 pub fn daysUntil(date: Date) i32 {
     const now = today();
     return daysBetween(now, date);
-}
-
-/// Convert Date to epoch days (days since 1970-01-01).
-fn dateToEpochDays(date: Date) i32 {
-    const y: i32 = @as(i32, date.year) - @as(i32, if (date.month <= 2) 1 else 0);
-    const era: i32 = @divFloor(if (y >= 0) y else y - 399, 400);
-    const yoe: u32 = @intCast(y - era * 400);
-    const m: u32 = date.month;
-    const d: u32 = date.day;
-    const doy: u32 = @divFloor(153 * (if (m > 2) m - 3 else m + 9) + 2, 5) + d - 1;
-    const doe: u32 = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
-    return era * 146097 + @as(i32, @intCast(doe)) - 719468;
-}
-
-/// Convert epoch days to Date.
-fn epochDaysToDate(epoch_day: i32) Date {
-    const z = epoch_day + 719468;
-    const era: i32 = @divFloor(if (z >= 0) z else z - 146096, 146097);
-    const doe: u32 = @intCast(z - era * 146097);
-    const yoe: u32 = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365);
-    const y: i32 = @as(i32, @intCast(yoe)) + era * 400;
-    const doy: u32 = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
-    const mp: u32 = @divFloor(5 * doy + 2, 153);
-    const d: u8 = @intCast(doy - @divFloor(153 * mp + 2, 5) + 1);
-    const m: u8 = if (mp < 10) @intCast(mp + 3) else @intCast(mp - 9);
-    const year: u16 = @intCast(if (m <= 2) y + 1 else y);
-    return Date.initUnchecked(year, m, d);
 }
 
 // ============ TESTS ============
