@@ -103,6 +103,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return .{ .date = nextWeekday(reference, target_dow) };
     }
 
+    // Month names as periods
+    if (parseMonthName(lower, reference)) |parsed| {
+        return parsed;
+    }
+
     // Forward offsets: +Nd, +Nw, +Nm
     if (parseOffset(lower)) |offset| {
         return .{ .date = try applyOffset(reference, offset) };
@@ -406,6 +411,37 @@ fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
     if (std.mem.eql(u8, str, "beginning of last year")) {
         const prev = arithmetic.addYears(reference, -1) catch return null;
         return Date.initUnchecked(prev.year, 1, 1);
+    }
+
+    return null;
+}
+
+/// Parse month name and return as period.
+fn parseMonthName(str: []const u8, reference: Date) ?ParsedDate {
+    const months = [_]struct { full: []const u8, abbrev: []const u8, month: u8 }{
+        .{ .full = "january", .abbrev = "jan", .month = 1 },
+        .{ .full = "february", .abbrev = "feb", .month = 2 },
+        .{ .full = "march", .abbrev = "mar", .month = 3 },
+        .{ .full = "april", .abbrev = "apr", .month = 4 },
+        .{ .full = "may", .abbrev = "may", .month = 5 },
+        .{ .full = "june", .abbrev = "jun", .month = 6 },
+        .{ .full = "july", .abbrev = "jul", .month = 7 },
+        .{ .full = "august", .abbrev = "aug", .month = 8 },
+        .{ .full = "september", .abbrev = "sep", .month = 9 },
+        .{ .full = "october", .abbrev = "oct", .month = 10 },
+        .{ .full = "november", .abbrev = "nov", .month = 11 },
+        .{ .full = "december", .abbrev = "dec", .month = 12 },
+    };
+
+    for (months) |m| {
+        if (std.mem.eql(u8, str, m.full) or std.mem.eql(u8, str, m.abbrev)) {
+            // If target month is current or past, use next year
+            const year: u16 = if (m.month <= reference.month) reference.year + 1 else reference.year;
+            return .{ .period = .{
+                .start = Date.initUnchecked(year, m.month, 1),
+                .granularity = .month,
+            } };
+        }
     }
 
     return null;
@@ -912,4 +948,32 @@ test "parse 'beginning of next week'" {
     const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
     const result = try parseWithReference("beginning of next week", ref);
     try std.testing.expectEqual(Date.initUnchecked(2024, 1, 22), result.date); // Monday of next week
+}
+
+test "parse 'february' in January returns this year" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("february", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 1), result.period.start);
+}
+
+test "parse 'february' in March returns next year" {
+    const ref = Date.initUnchecked(2024, 3, 15);
+    const result = try parseWithReference("february", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 2, 1), result.period.start);
+}
+
+test "parse 'january' in January returns next year" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("january", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 1, 1), result.period.start);
+}
+
+test "parse 'dec' abbreviation works" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("dec", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 12, 1), result.period.start);
 }
