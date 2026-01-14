@@ -13,6 +13,7 @@ pub const ParseError = @import("parse.zig").ParseError;
 pub const parse = @import("parse.zig").parse;
 pub const parseWithReference = @import("parse.zig").parseWithReference;
 
+pub const ArithmeticError = @import("arithmetic.zig").ArithmeticError;
 pub const addDays = @import("arithmetic.zig").addDays;
 pub const addMonths = @import("arithmetic.zig").addMonths;
 pub const daysBetween = @import("arithmetic.zig").daysBetween;

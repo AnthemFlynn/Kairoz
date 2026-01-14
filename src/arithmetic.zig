@@ -13,15 +13,27 @@ pub fn addDays(date: Date, days: i32) Date {
     return epochDaysToDate(dateToEpochDays(date) + days);
 }
 
+pub const ArithmeticError = error{
+    YearOutOfRange,
+};
+
 /// Add (or subtract) months from a date. Day is clamped if it exceeds target month.
-pub fn addMonths(date: Date, months: i32) Date {
-    const total_months: i32 = @as(i32, date.year) * 12 + @as(i32, date.month - 1) + months;
+/// Returns error if result year would be outside valid range (1-65535).
+pub fn addMonths(date: Date, months: i32) ArithmeticError!Date {
+    // Calculate total months, checking for overflow
+    const year_months: i64 = @as(i64, date.year) * 12;
+    const total_months: i64 = year_months + @as(i64, date.month - 1) + @as(i64, months);
 
-    const new_year: i32 = @divFloor(total_months, 12);
-    const new_month: i32 = @mod(total_months, 12) + 1;
+    const new_year_i64: i64 = @divFloor(total_months, 12);
+    const new_month_i64: i64 = @mod(total_months, 12) + 1;
 
-    const year: u16 = @intCast(new_year);
-    const month: u8 = @intCast(new_month);
+    // Validate year is in valid range (1-65535)
+    if (new_year_i64 < 1 or new_year_i64 > 65535) {
+        return error.YearOutOfRange;
+    }
+
+    const year: u16 = @intCast(new_year_i64);
+    const month: u8 = @intCast(new_month_i64);
     const max_day = daysInMonth(year, month);
     const day = @min(date.day, max_day);
 
@@ -80,30 +92,45 @@ test "addDays handles leap year" {
 
 test "addMonths adds months within same year" {
     const date = Date.initUnchecked(2024, 3, 15);
-    const result = addMonths(date, 2);
+    const result = try addMonths(date, 2);
     try std.testing.expectEqual(@as(u8, 5), result.month);
     try std.testing.expectEqual(@as(u16, 2024), result.year);
 }
 
 test "addMonths crosses year boundary" {
     const date = Date.initUnchecked(2024, 11, 15);
-    const result = addMonths(date, 3);
+    const result = try addMonths(date, 3);
     try std.testing.expectEqual(@as(u8, 2), result.month);
     try std.testing.expectEqual(@as(u16, 2025), result.year);
 }
 
 test "addMonths clamps day" {
     const date = Date.initUnchecked(2024, 1, 31);
-    const result = addMonths(date, 1);
+    const result = try addMonths(date, 1);
     try std.testing.expectEqual(@as(u8, 29), result.day);
     try std.testing.expectEqual(@as(u8, 2), result.month);
 }
 
 test "addMonths subtracts months" {
     const date = Date.initUnchecked(2024, 3, 15);
-    const result = addMonths(date, -2);
+    const result = try addMonths(date, -2);
     try std.testing.expectEqual(@as(u8, 1), result.month);
     try std.testing.expectEqual(@as(u16, 2024), result.year);
+}
+
+test "addMonths returns error for year 0" {
+    const date = Date.initUnchecked(1, 1, 15);
+    try std.testing.expectError(error.YearOutOfRange, addMonths(date, -12));
+}
+
+test "addMonths returns error for negative year" {
+    const date = Date.initUnchecked(1, 1, 15);
+    try std.testing.expectError(error.YearOutOfRange, addMonths(date, -13));
+}
+
+test "addMonths returns error for year overflow" {
+    const date = Date.initUnchecked(65535, 1, 15);
+    try std.testing.expectError(error.YearOutOfRange, addMonths(date, 12));
 }
 
 test "daysBetween same date" {

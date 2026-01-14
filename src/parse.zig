@@ -7,7 +7,9 @@ const DateError = DateMod.DateError;
 const today_fn = DateMod.today;
 const dateToEpochDays = DateMod.dateToEpochDays;
 const epochDaysToDate = DateMod.epochDaysToDate;
-const daysInMonth = DateMod.daysInMonth;
+
+const arithmetic = @import("arithmetic.zig");
+const ArithmeticError = arithmetic.ArithmeticError;
 
 pub const ParseError = error{
     InvalidFormat,
@@ -20,12 +22,12 @@ pub const ParsedDate = union(enum) {
 };
 
 /// Parse date string using current system date as reference.
-pub fn parse(str: []const u8) (ParseError || DateError)!ParsedDate {
+pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!ParsedDate {
     return parseWithReference(str, today_fn());
 }
 
 /// Parse date string with explicit reference date (for testing).
-pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError)!ParsedDate {
+pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError || ArithmeticError)!ParsedDate {
     const trimmed = std.mem.trim(u8, str, " \t\n\r");
     if (trimmed.len == 0) return error.InvalidFormat;
 
@@ -56,7 +58,7 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
 
     // Forward offsets: +Nd, +Nw, +Nm
     if (parseOffset(lower)) |offset| {
-        return .{ .date = applyOffset(reference, offset) };
+        return .{ .date = try applyOffset(reference, offset) };
     } else |err| {
         // If it's InvalidOffset, return it (valid format but zero value)
         if (err == error.InvalidOffset) return err;
@@ -181,26 +183,12 @@ fn parseOffset(str: []const u8) (ParseError)!Offset {
 }
 
 /// Apply offset to date
-fn applyOffset(date: Date, offset: Offset) Date {
+fn applyOffset(date: Date, offset: Offset) ArithmeticError!Date {
     return switch (offset.unit) {
         .day => addDaysInternal(date, @intCast(offset.value)),
         .week => addDaysInternal(date, @intCast(offset.value * 7)),
-        .month => addMonthsInternal(date, offset.value),
+        .month => arithmetic.addMonths(date, @intCast(offset.value)),
     };
-}
-
-/// Add months to date with day clamping
-fn addMonthsInternal(date: Date, months: u32) Date {
-    const total_months = @as(u32, date.month) - 1 + months;
-    const years_to_add = total_months / 12;
-    const new_month: u8 = @intCast((total_months % 12) + 1);
-    const new_year: u16 = date.year + @as(u16, @intCast(years_to_add));
-
-    // Clamp day to valid range for new month
-    const max_day = daysInMonth(new_year, new_month);
-    const new_day = @min(date.day, max_day);
-
-    return Date.initUnchecked(new_year, new_month, new_day);
 }
 
 // ============ TESTS ============
