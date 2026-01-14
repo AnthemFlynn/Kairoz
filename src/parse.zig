@@ -58,6 +58,15 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
     if (parseOffset(lower)) |offset| {
         return .{ .date = applyOffset(reference, offset) };
     } else |err| {
+        // If it's InvalidOffset, return it (valid format but zero value)
+        if (err == error.InvalidOffset) return err;
+        // Otherwise (InvalidFormat), try other parsers
+    }
+
+    // Absolute dates: YYYY-MM-DD, MM-DD, DD (use original trimmed, not lowercase)
+    if (parseAbsoluteDate(trimmed, reference)) |date| {
+        return .{ .date = date };
+    } else |err| {
         return err;
     }
 }
@@ -72,6 +81,36 @@ fn toLower(str: []const u8, buf: []u8) []const u8 {
 
 fn addDaysInternal(date: Date, days: i32) Date {
     return epochDaysToDate(dateToEpochDays(date) + days);
+}
+
+/// Parse absolute date formats: YYYY-MM-DD, MM-DD, DD
+fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)!Date {
+    // Check for YYYY-MM-DD format (length 10, dashes at positions 4 and 7)
+    if (str.len == 10 and str[4] == '-' and str[7] == '-') {
+        const year = std.fmt.parseInt(u16, str[0..4], 10) catch return error.InvalidFormat;
+        const month = std.fmt.parseInt(u8, str[5..7], 10) catch return error.InvalidFormat;
+        const day = std.fmt.parseInt(u8, str[8..10], 10) catch return error.InvalidFormat;
+        return Date.init(year, month, day);
+    }
+
+    // Check for MM-DD format (length 5, dash at position 2)
+    if (str.len == 5 and str[2] == '-') {
+        const month = std.fmt.parseInt(u8, str[0..2], 10) catch return error.InvalidFormat;
+        const day = std.fmt.parseInt(u8, str[3..5], 10) catch return error.InvalidFormat;
+        return Date.init(reference.year, month, day);
+    }
+
+    // Check for DD format (length 1-2, all digits)
+    if (str.len >= 1 and str.len <= 2) {
+        // Verify all characters are digits
+        for (str) |c| {
+            if (!std.ascii.isDigit(c)) return error.InvalidFormat;
+        }
+        const day = std.fmt.parseInt(u8, str, 10) catch return error.InvalidFormat;
+        return Date.init(reference.year, reference.month, day);
+    }
+
+    return error.InvalidFormat;
 }
 
 /// Parse weekday name, returns 0-6 (Mon-Sun) or null.
@@ -288,4 +327,35 @@ test "parse invalid offsets" {
     try std.testing.expectError(error.InvalidOffset, parseWithReference("+0d", ref));
     try std.testing.expectError(error.InvalidFormat, parseWithReference("+d", ref));
     try std.testing.expectError(error.InvalidFormat, parseWithReference("+-3d", ref));
+}
+
+test "parse 'YYYY-MM-DD' full date" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("2025-06-20", ref);
+    try std.testing.expectEqual(@as(u16, 2025), result.date.year);
+    try std.testing.expectEqual(@as(u8, 6), result.date.month);
+    try std.testing.expectEqual(@as(u8, 20), result.date.day);
+}
+
+test "parse 'MM-DD' uses reference year" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("06-20", ref);
+    try std.testing.expectEqual(@as(u16, 2024), result.date.year);
+    try std.testing.expectEqual(@as(u8, 6), result.date.month);
+    try std.testing.expectEqual(@as(u8, 20), result.date.day);
+}
+
+test "parse 'DD' uses reference year and month" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("20", ref);
+    try std.testing.expectEqual(@as(u16, 2024), result.date.year);
+    try std.testing.expectEqual(@as(u8, 6), result.date.month);
+    try std.testing.expectEqual(@as(u8, 20), result.date.day);
+}
+
+test "parse invalid absolute dates" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    try std.testing.expectError(error.InvalidMonth, parseWithReference("2024-13-01", ref));
+    try std.testing.expectError(error.InvalidDay, parseWithReference("2024-01-32", ref));
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("2024-1-15", ref)); // not zero-padded
 }
