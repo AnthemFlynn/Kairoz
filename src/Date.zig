@@ -47,11 +47,24 @@ pub fn today() Date {
     const ts = std.time.timestamp();
     const epoch_secs: u64 = @intCast(ts);
     const epoch_day = @divFloor(epoch_secs, 86400);
-    return epochDayToDate(@intCast(epoch_day));
+    return epochDaysToDate(@intCast(epoch_day));
+}
+
+/// Convert Date to epoch day (days since 1970-01-01).
+pub fn dateToEpochDays(date: Date) i32 {
+    // Algorithm from Howard Hinnant's date algorithms
+    const y: i32 = @as(i32, date.year) - @as(i32, if (date.month <= 2) 1 else 0);
+    const era: i32 = @divFloor(if (y >= 0) y else y - 399, 400);
+    const yoe: u32 = @intCast(y - era * 400);
+    const m: u32 = date.month;
+    const d: u32 = date.day;
+    const doy: u32 = @divFloor(153 * (if (m > 2) m - 3 else m + 9) + 2, 5) + d - 1;
+    const doe: u32 = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + @as(i32, @intCast(doe)) - 719468;
 }
 
 /// Convert epoch day (days since 1970-01-01) to Date.
-fn epochDayToDate(epoch_day: i32) Date {
+pub fn epochDaysToDate(epoch_day: i32) Date {
     // Algorithm from Howard Hinnant's date algorithms
     const z = epoch_day + 719468;
     const era: i32 = @divFloor(if (z >= 0) z else z - 146096, 146097);
@@ -111,15 +124,15 @@ test "daysInMonth" {
     try std.testing.expectEqual(@as(u8, 31), daysInMonth(2024, 12));
 }
 
-test "epochDayToDate known dates" {
+test "epochDaysToDate known dates" {
     // 1970-01-01 is epoch day 0
-    const epoch = epochDayToDate(0);
+    const epoch = epochDaysToDate(0);
     try std.testing.expectEqual(@as(u16, 1970), epoch.year);
     try std.testing.expectEqual(@as(u8, 1), epoch.month);
     try std.testing.expectEqual(@as(u8, 1), epoch.day);
 
     // 2024-01-15 is epoch day 19737
-    const jan15 = epochDayToDate(19737);
+    const jan15 = epochDaysToDate(19737);
     try std.testing.expectEqual(@as(u16, 2024), jan15.year);
     try std.testing.expectEqual(@as(u8, 1), jan15.month);
     try std.testing.expectEqual(@as(u8, 15), jan15.day);
