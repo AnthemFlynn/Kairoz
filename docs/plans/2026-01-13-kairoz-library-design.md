@@ -1,7 +1,7 @@
 # Kairoz Library Design
 
 **Date:** 2026-01-13
-**Status:** Draft
+**Status:** Approved
 **Goal:** Extract date parsing from todo CLI into standalone Zig library
 
 ## Overview
@@ -30,7 +30,11 @@ Kairoz/
 ├── build.zig
 ├── build.zig.zon
 ├── src/
-│   └── kairoz.zig      # Single-file library
+│   ├── root.zig        # Public API re-exports
+│   ├── Date.zig        # Date type, DateError, validation, today()
+│   ├── parse.zig       # ParsedDate, ParseError, parsing functions
+│   ├── arithmetic.zig  # addDays, addMonths, daysBetween, daysUntil
+│   └── format.zig      # formatRelative, max_format_len
 ├── docs/
 │   └── plans/
 ├── README.md
@@ -38,146 +42,212 @@ Kairoz/
 └── .gitignore
 ```
 
-## Package Configuration
+## Module Architecture
 
-**build.zig.zon:**
-```zig
-.{
-    .name = .kairoz,
-    .version = "0.1.0",
-    .fingerprint = 0x...,  // Auto-generated
-    .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
-    .paths = .{
-        "build.zig",
-        "build.zig.zon",
-        "src",
-        "LICENSE",
-        "README.md",
-    },
-}
+**Dependency graph (no circular dependencies):**
+
+```
+root.zig
+   ├── Date.zig        (no internal deps)
+   ├── parse.zig       → Date.zig
+   ├── arithmetic.zig  → Date.zig
+   └── format.zig      → Date.zig, arithmetic.zig
 ```
 
-**build.zig:**
-```zig
-const std = @import("std");
-
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    // Library module exposed to consumers
-    const mod = b.addModule("kairoz", .{
-        .root_source_file = b.path("src/kairoz.zig"),
-        .target = target,
-    });
-
-    // Tests
-    const tests = b.addTest(.{
-        .root_module = mod,
-        .optimize = optimize,
-    });
-    const run_tests = b.addRunArtifact(tests);
-
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_tests.step);
-}
-```
+Each module has single responsibility:
+- **Date.zig** — The type, its errors, construction (including `today()`)
+- **parse.zig** — Text → ParsedDate
+- **arithmetic.zig** — Date math
+- **format.zig** — Date → Text
 
 ## Public API
 
 ```zig
 const kairoz = @import("kairoz");
 
-// Core type
-const Date = kairoz.Date;  // { year: u16, month: u8, day: u8 }
+// === Types ===
+const Date = kairoz.Date;              // { year: u16, month: u8, day: u8 }
+const DateError = kairoz.DateError;    // InvalidDay, InvalidMonth, InvalidYear
+const ParsedDate = kairoz.ParsedDate;  // union(enum) { date: Date, clear }
+const ParseError = kairoz.ParseError;  // InvalidFormat, InvalidOffset
 
-// Parse natural language → Date (null for "none"/"clear")
-const due = try kairoz.parse("tomorrow");      // ?Date
-const cleared = try kairoz.parse("none");      // null
+// === Construction ===
+const date = try kairoz.Date.init(2024, 1, 15);  // validated
+const now = kairoz.today();                       // from system clock
 
-// Get current date
-const today = kairoz.today();
+// === Parsing ===
+const result = try kairoz.parse("tomorrow");  // uses system time
+switch (result) {
+    .date => |d| // use the date,
+    .clear => // handle clear request,
+}
 
-// Date arithmetic
-const next_week = kairoz.addDays(today, 7);
-const next_month = kairoz.addMonths(today, 1);
-const diff = kairoz.daysBetween(date1, date2);  // i32
-const until = kairoz.daysUntil(due_date);       // i32 (convenience)
+// For testing: explicit reference date
+const result2 = try kairoz.parseWithReference("tomorrow", reference_date);
 
-// Format for display
-var buf: [32]u8 = undefined;
-const display = kairoz.formatRelative(due.?, today, &buf);  // "tomorrow"
+// === Arithmetic ===
+const next_week = kairoz.addDays(date, 7);
+const next_month = kairoz.addMonths(date, 1);
+const diff = kairoz.daysBetween(date1, date2);  // i32, signed
+const until = kairoz.daysUntil(due_date);       // convenience: daysBetween(today(), date)
 
-// Error handling
-kairoz.parse("invalid") catch |err| switch (err) {
-    error.InvalidFormat => ...,
-    error.InvalidDay => ...,
-    error.InvalidMonth => ...,
-    error.InvalidYear => ...,
-    error.InvalidOffset => ...,
-};
+// === Formatting ===
+var buf: [kairoz.max_format_len]u8 = undefined;
+const display = kairoz.formatRelative(date, reference, &buf);  // "tomorrow", "in 3 days", etc.
 ```
 
-## Source Structure
+## Module Specifications
 
-**src/kairoz.zig:**
+### Date.zig
+
 ```zig
-//! Kairoz - Natural language date parsing for Zig
-//!
-//! Supports: today, tomorrow, +3d, +2w, monday, YYYY-MM-DD, etc.
+//! Date type and construction utilities.
 
 const std = @import("std");
 
-// === Core Type ===
-pub const Date = struct {
-    year: u16,
-    month: u8,
-    day: u8,
-};
-
-// === Errors ===
-pub const ParseError = error{
-    InvalidFormat,
+pub const DateError = error{
     InvalidDay,
     InvalidMonth,
     InvalidYear,
+};
+
+pub const Date = struct {
+    year: u16,
+    month: u8,  // 1-12
+    day: u8,    // 1-31 (validated against month)
+
+    /// Construct a validated Date.
+    pub fn init(year: u16, month: u8, day: u8) DateError!Date;
+
+    /// Unchecked construction for internal use.
+    pub fn initUnchecked(year: u16, month: u8, day: u8) Date;
+};
+
+/// Returns current date from system clock.
+pub fn today() Date;
+
+/// Check if year is a leap year.
+pub fn isLeapYear(year: u16) bool;
+
+/// Days in given month (accounts for leap years).
+pub fn daysInMonth(year: u16, month: u8) u8;
+```
+
+### parse.zig
+
+```zig
+//! Natural language date parsing.
+
+const Date = @import("Date.zig").Date;
+const DateError = @import("Date.zig").DateError;
+
+pub const ParseError = error{
+    InvalidFormat,
     InvalidOffset,
 };
 
-// === Public API ===
-pub fn parse(date_str: []const u8) ParseError!?Date { ... }
-pub fn today() Date { ... }
-pub fn formatRelative(date: Date, reference: Date, buf: []u8) []const u8 { ... }
-pub fn addDays(date: Date, days: i32) Date { ... }
-pub fn addMonths(date: Date, months: i32) Date { ... }
-pub fn daysBetween(from: Date, to: Date) i32 { ... }
-pub fn daysUntil(date: Date) i32 { return daysBetween(today(), date); }
+pub const ParsedDate = union(enum) {
+    date: Date,
+    clear,
+};
 
-// === Internal Functions (private) ===
-fn getCurrentDate() Date { ... }
-fn dateToUnix(date: Date) i64 { ... }
-fn unixToDate(timestamp: i64) Date { ... }
-fn toLower(str: []const u8, buf: []u8) []const u8 { ... }
-fn parseWeekday(name: []const u8) ?u8 { ... }
-fn parseOffset(offset_str: []const u8, base: Date) ParseError!Date { ... }
-fn parseAbsoluteDate(date_str: []const u8, base: Date) ParseError!Date { ... }
-fn nextWeekday(from: Date, target_dow: u8) Date { ... }
-fn dayOfWeek(date: Date) u8 { ... }
-fn daysInMonth(year: u16, month: u8) u8 { ... }
-fn isLeapYear(year: u16) bool { ... }
-fn getMonthAbbrev(month: u8) []const u8 { ... }
+/// Parse date string using current system date as reference.
+pub fn parse(str: []const u8) (ParseError || DateError)!ParsedDate;
 
-// === Tests (inline) ===
-test "parse handles 'today'" { ... }
-// ... all existing tests
+/// Parse date string with explicit reference date (for testing).
+pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError)!ParsedDate;
 ```
+
+**Supported formats:**
+- Keywords: `today`, `tomorrow`, `yesterday`, `none`, `clear`
+- Weekdays: `monday`, `mon`, `tuesday`, `tue`, etc. (next occurrence)
+- Offsets: `+3d`, `+2w`, `+1m`
+- Absolute: `YYYY-MM-DD`, `MM-DD`, `DD`
+
+### arithmetic.zig
+
+```zig
+//! Date arithmetic operations.
+
+const Date = @import("Date.zig").Date;
+
+/// Add (or subtract) days from a date.
+pub fn addDays(date: Date, days: i32) Date;
+
+/// Add (or subtract) months. Day clamped if exceeds target month.
+pub fn addMonths(date: Date, months: i32) Date;
+
+/// Signed difference in days between two dates.
+pub fn daysBetween(from: Date, to: Date) i32;
+
+/// Days from today until given date. Negative if in past.
+pub fn daysUntil(date: Date) i32;
+```
+
+### format.zig
+
+```zig
+//! Relative date formatting for display.
+
+const Date = @import("Date.zig").Date;
+
+/// Maximum buffer size needed for any formatted output.
+pub const max_format_len: usize = 32;
+
+/// Format a date relative to reference for human-readable display.
+pub fn formatRelative(date: Date, reference: Date, buf: []u8) []const u8;
+```
+
+**Output examples:**
+- Same day: `"today"`
+- +1 day: `"tomorrow"`
+- -1 day: `"yesterday"`
+- +2 to +14 days: `"in 5 days"`
+- -2 to -14 days: `"5 days ago"`
+- Same year: `"Jan 15"`
+- Different year: `"Jan 15, 2025"`
+
+### root.zig
+
+```zig
+//! Kairoz - Natural language date parsing for Zig
+
+pub const Date = @import("Date.zig").Date;
+pub const DateError = @import("Date.zig").DateError;
+pub const today = @import("Date.zig").today;
+pub const isLeapYear = @import("Date.zig").isLeapYear;
+pub const daysInMonth = @import("Date.zig").daysInMonth;
+
+pub const ParsedDate = @import("parse.zig").ParsedDate;
+pub const ParseError = @import("parse.zig").ParseError;
+pub const parse = @import("parse.zig").parse;
+pub const parseWithReference = @import("parse.zig").parseWithReference;
+
+pub const addDays = @import("arithmetic.zig").addDays;
+pub const addMonths = @import("arithmetic.zig").addMonths;
+pub const daysBetween = @import("arithmetic.zig").daysBetween;
+pub const daysUntil = @import("arithmetic.zig").daysUntil;
+
+pub const formatRelative = @import("format.zig").formatRelative;
+pub const max_format_len = @import("format.zig").max_format_len;
+```
+
+## Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Module structure | Modular from start | Single responsibility, easier testing |
+| Date validation | Constructor with validation | `Date.init()` validates, fields public for advanced use |
+| Error sets | Separate `DateError` and `ParseError` | Errors match their domains |
+| Time source | Both convenience and explicit | `parse()` for ease, `parseWithReference()` for testing |
+| File naming | PascalCase for types | Follows stdlib convention |
+| Clear semantics | Tagged union `ParsedDate` | More explicit than `?Date` |
+| Buffer handling | Caller-provided | Idiomatic Zig, no hidden allocations |
+| `today()` location | Date.zig | Clean dependency graph |
 
 ## Consumer Integration
 
-After extraction, the todo app becomes a consumer:
-
-**todo/build.zig.zon:**
+**build.zig.zon:**
 ```zig
 .dependencies = .{
     .kairoz = .{
@@ -187,37 +257,24 @@ After extraction, the todo app becomes a consumer:
 },
 ```
 
-**todo/build.zig:**
+**build.zig:**
 ```zig
 const kairoz_dep = b.dependency("kairoz", .{});
 exe.root_module.addImport("kairoz", kairoz_dep.module("kairoz"));
 ```
 
-**todo/src/task.zig:**
-```zig
-const kairoz = @import("kairoz");
-pub const Date = kairoz.Date;
-```
+## Testing Strategy
 
-**todo/src/date.zig:** Deleted (functionality now in Kairoz)
+Each module contains inline tests using `std.testing`. Key patterns:
 
-## Publishing
+- **Date.zig**: Validation edge cases, leap years
+- **parse.zig**: Use `parseWithReference` for deterministic tests
+- **arithmetic.zig**: Month boundary clamping, year transitions
+- **format.zig**: All output variants with explicit reference dates
 
-**Initial setup:**
-```bash
-cd ~/projects/Kairoz
-zig init -m
-# Edit build.zig.zon, delete fingerprint, run zig build to regenerate
-```
-
-**Release process:**
-1. `git tag v0.1.0`
-2. `git push origin v0.1.0`
-3. Users: `zig fetch --save git+https://github.com/<username>/kairoz#v0.1.0`
+Run tests: `zig build test`
 
 ## Gap Analysis (Future Work)
-
-Features to add in future versions:
 
 | Feature | Version | Priority |
 |---------|---------|----------|
