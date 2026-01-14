@@ -72,6 +72,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return .{ .date = date };
     }
 
+    // Period references: "next week", "last month", "this year"
+    if (parsePeriodReference(lower, reference)) |parsed| {
+        return parsed;
+    }
+
     // Relative keywords
     if (std.mem.eql(u8, lower, "today")) {
         return .{ .date = reference };
@@ -218,6 +223,53 @@ fn parseWeekdayModifier(str: []const u8, reference: Date) ?Date {
         if (parseWeekday(weekday_str)) |target_dow| {
             return lastWeekday(reference, target_dow);
         }
+    }
+
+    return null;
+}
+
+/// Parse period references: "next week", "last month", "this year", etc.
+fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedDate {
+    // Week references
+    if (std.mem.eql(u8, str, "next week")) {
+        const this_monday = arithmetic.startOfWeek(reference);
+        const next_monday = addDaysInternal(this_monday, 7);
+        return .{ .period = .{ .start = next_monday, .granularity = .week } };
+    }
+    if (std.mem.eql(u8, str, "last week")) {
+        const this_monday = arithmetic.startOfWeek(reference);
+        const last_monday = addDaysInternal(this_monday, -7);
+        return .{ .period = .{ .start = last_monday, .granularity = .week } };
+    }
+    if (std.mem.eql(u8, str, "this week")) {
+        const this_monday = arithmetic.startOfWeek(reference);
+        return .{ .period = .{ .start = this_monday, .granularity = .week } };
+    }
+
+    // Month references
+    if (std.mem.eql(u8, str, "next month")) {
+        const next = arithmetic.addMonths(reference, 1) catch return null;
+        return .{ .period = .{ .start = arithmetic.firstDayOfMonth(next), .granularity = .month } };
+    }
+    if (std.mem.eql(u8, str, "last month")) {
+        const prev = arithmetic.addMonths(reference, -1) catch return null;
+        return .{ .period = .{ .start = arithmetic.firstDayOfMonth(prev), .granularity = .month } };
+    }
+    if (std.mem.eql(u8, str, "this month")) {
+        return .{ .period = .{ .start = arithmetic.firstDayOfMonth(reference), .granularity = .month } };
+    }
+
+    // Year references
+    if (std.mem.eql(u8, str, "next year")) {
+        const next = arithmetic.addYears(reference, 1) catch return null;
+        return .{ .period = .{ .start = Date.initUnchecked(next.year, 1, 1), .granularity = .year } };
+    }
+    if (std.mem.eql(u8, str, "last year")) {
+        const prev = arithmetic.addYears(reference, -1) catch return null;
+        return .{ .period = .{ .start = Date.initUnchecked(prev.year, 1, 1), .granularity = .year } };
+    }
+    if (std.mem.eql(u8, str, "this year")) {
+        return .{ .period = .{ .start = Date.initUnchecked(reference.year, 1, 1), .granularity = .year } };
     }
 
     return null;
@@ -546,4 +598,68 @@ test "parse 'last friday' from Monday" {
     const result = try parseWithReference("last friday", ref);
     // Last Friday is Jan 12
     try std.testing.expectEqual(Date.initUnchecked(2024, 1, 12), result.date);
+}
+
+test "parse 'next week' returns period" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("next week", ref);
+    // Should return Monday of next week
+    try std.testing.expectEqual(Granularity.week, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 22), result.period.start);
+}
+
+test "parse 'last week' returns period" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("last week", ref);
+    try std.testing.expectEqual(Granularity.week, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 8), result.period.start);
+}
+
+test "parse 'this week' returns period" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("this week", ref);
+    try std.testing.expectEqual(Granularity.week, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.period.start);
+}
+
+test "parse 'next month' returns period" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("next month", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 1), result.period.start);
+}
+
+test "parse 'last month' returns period" {
+    const ref = Date.initUnchecked(2024, 2, 15);
+    const result = try parseWithReference("last month", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.period.start);
+}
+
+test "parse 'this month' returns period" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("this month", ref);
+    try std.testing.expectEqual(Granularity.month, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.period.start);
+}
+
+test "parse 'next year' returns period" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("next year", ref);
+    try std.testing.expectEqual(Granularity.year, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 1, 1), result.period.start);
+}
+
+test "parse 'last year' returns period" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("last year", ref);
+    try std.testing.expectEqual(Granularity.year, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2023, 1, 1), result.period.start);
+}
+
+test "parse 'this year' returns period" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("this year", ref);
+    try std.testing.expectEqual(Granularity.year, result.period.granularity);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.period.start);
 }
