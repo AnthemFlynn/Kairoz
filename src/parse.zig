@@ -67,6 +67,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return .clear;
     }
 
+    // Boundary expressions (most specific multi-word)
+    if (parseBoundaryExpression(lower, reference)) |date| {
+        return .{ .date = date };
+    }
+
     // Weekday with modifier: "next monday", "last friday"
     if (parseWeekdayModifier(lower, reference)) |date| {
         return .{ .date = date };
@@ -326,6 +331,81 @@ fn parseNaturalOffsetValue(str: []const u8, sign: i32, reference: Date) ?Date {
     }
     if (std.mem.eql(u8, unit_str, "year") or std.mem.eql(u8, unit_str, "years")) {
         return arithmetic.addYears(reference, signed_value) catch return null;
+    }
+
+    return null;
+}
+
+/// Parse boundary expressions: "end of month", "beginning of next week", etc.
+fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
+    // Current period boundaries
+    if (std.mem.eql(u8, str, "end of month")) {
+        return arithmetic.lastDayOfMonth(reference);
+    }
+    if (std.mem.eql(u8, str, "beginning of month")) {
+        return arithmetic.firstDayOfMonth(reference);
+    }
+    if (std.mem.eql(u8, str, "end of week")) {
+        return arithmetic.endOfWeek(reference);
+    }
+    if (std.mem.eql(u8, str, "beginning of week")) {
+        return arithmetic.startOfWeek(reference);
+    }
+    if (std.mem.eql(u8, str, "end of year")) {
+        return Date.initUnchecked(reference.year, 12, 31);
+    }
+    if (std.mem.eql(u8, str, "beginning of year")) {
+        return Date.initUnchecked(reference.year, 1, 1);
+    }
+
+    // Next period boundaries
+    if (std.mem.eql(u8, str, "end of next month")) {
+        const next = arithmetic.addMonths(reference, 1) catch return null;
+        return arithmetic.lastDayOfMonth(next);
+    }
+    if (std.mem.eql(u8, str, "beginning of next month")) {
+        const next = arithmetic.addMonths(reference, 1) catch return null;
+        return arithmetic.firstDayOfMonth(next);
+    }
+    if (std.mem.eql(u8, str, "end of next week")) {
+        const next_monday = addDaysInternal(arithmetic.startOfWeek(reference), 7);
+        return arithmetic.endOfWeek(next_monday);
+    }
+    if (std.mem.eql(u8, str, "beginning of next week")) {
+        return addDaysInternal(arithmetic.startOfWeek(reference), 7);
+    }
+    if (std.mem.eql(u8, str, "end of next year")) {
+        const next = arithmetic.addYears(reference, 1) catch return null;
+        return Date.initUnchecked(next.year, 12, 31);
+    }
+    if (std.mem.eql(u8, str, "beginning of next year")) {
+        const next = arithmetic.addYears(reference, 1) catch return null;
+        return Date.initUnchecked(next.year, 1, 1);
+    }
+
+    // Last period boundaries
+    if (std.mem.eql(u8, str, "end of last month")) {
+        const prev = arithmetic.addMonths(reference, -1) catch return null;
+        return arithmetic.lastDayOfMonth(prev);
+    }
+    if (std.mem.eql(u8, str, "beginning of last month")) {
+        const prev = arithmetic.addMonths(reference, -1) catch return null;
+        return arithmetic.firstDayOfMonth(prev);
+    }
+    if (std.mem.eql(u8, str, "end of last week")) {
+        const last_monday = addDaysInternal(arithmetic.startOfWeek(reference), -7);
+        return arithmetic.endOfWeek(last_monday);
+    }
+    if (std.mem.eql(u8, str, "beginning of last week")) {
+        return addDaysInternal(arithmetic.startOfWeek(reference), -7);
+    }
+    if (std.mem.eql(u8, str, "end of last year")) {
+        const prev = arithmetic.addYears(reference, -1) catch return null;
+        return Date.initUnchecked(prev.year, 12, 31);
+    }
+    if (std.mem.eql(u8, str, "beginning of last year")) {
+        const prev = arithmetic.addYears(reference, -1) catch return null;
+        return Date.initUnchecked(prev.year, 1, 1);
     }
 
     return null;
@@ -766,4 +846,70 @@ test "parse '1 year ago'" {
     const ref = Date.initUnchecked(2024, 6, 15);
     const result = try parseWithReference("1 year ago", ref);
     try std.testing.expectEqual(Date.initUnchecked(2023, 6, 15), result.date);
+}
+
+test "parse 'end of month'" {
+    const ref = Date.initUnchecked(2024, 2, 15);
+    const result = try parseWithReference("end of month", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 29), result.date);
+}
+
+test "parse 'beginning of month'" {
+    const ref = Date.initUnchecked(2024, 2, 15);
+    const result = try parseWithReference("beginning of month", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 1), result.date);
+}
+
+test "parse 'end of week'" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("end of week", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 21), result.date); // Sunday
+}
+
+test "parse 'beginning of week'" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("beginning of week", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.date); // Monday
+}
+
+test "parse 'end of year'" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("end of year", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 12, 31), result.date);
+}
+
+test "parse 'beginning of year'" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("beginning of year", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.date);
+}
+
+test "parse 'end of next month'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("end of next month", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 29), result.date);
+}
+
+test "parse 'beginning of next month'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("beginning of next month", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 1), result.date);
+}
+
+test "parse 'end of last month'" {
+    const ref = Date.initUnchecked(2024, 2, 15);
+    const result = try parseWithReference("end of last month", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 31), result.date);
+}
+
+test "parse 'end of next week'" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("end of next week", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 28), result.date); // Sunday of next week
+}
+
+test "parse 'beginning of next week'" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("beginning of next week", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 22), result.date); // Monday of next week
 }
