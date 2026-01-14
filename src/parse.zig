@@ -108,6 +108,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return parsed;
     }
 
+    // Ordinal days: "1st", "23rd"
+    if (try parseOrdinalDay(lower, reference)) |date| {
+        return .{ .date = date };
+    }
+
     // Forward offsets: +Nd, +Nw, +Nm
     if (parseOffset(lower)) |offset| {
         return .{ .date = try applyOffset(reference, offset) };
@@ -445,6 +450,25 @@ fn parseMonthName(str: []const u8, reference: Date) ?ParsedDate {
     }
 
     return null;
+}
+
+/// Parse ordinal day: "1st", "2nd", "3rd", "4th", "23rd", etc.
+fn parseOrdinalDay(str: []const u8, reference: Date) (ParseError || DateError)!?Date {
+    // Must be at least 3 characters (e.g., "1st")
+    if (str.len < 3) return null;
+
+    const suffix = str[str.len - 2 ..];
+    const valid_suffix = std.mem.eql(u8, suffix, "st") or
+        std.mem.eql(u8, suffix, "nd") or
+        std.mem.eql(u8, suffix, "rd") or
+        std.mem.eql(u8, suffix, "th");
+    if (!valid_suffix) return null;
+
+    const num_str = str[0 .. str.len - 2];
+    const day = std.fmt.parseInt(u8, num_str, 10) catch return null;
+
+    // Validate day for current month
+    return try Date.init(reference.year, reference.month, day);
 }
 
 const OffsetUnit = enum { day, week, month, year };
@@ -976,4 +1000,33 @@ test "parse 'dec' abbreviation works" {
     const result = try parseWithReference("dec", ref);
     try std.testing.expectEqual(Granularity.month, result.period.granularity);
     try std.testing.expectEqual(Date.initUnchecked(2024, 12, 1), result.period.start);
+}
+
+test "parse '1st' returns 1st of current month" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("1st", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 1), result.date);
+}
+
+test "parse '23rd' returns 23rd of current month" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("23rd", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 23), result.date);
+}
+
+test "parse '2nd' returns 2nd of current month" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("2nd", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 2), result.date);
+}
+
+test "parse '31st' in short month returns error" {
+    const ref = Date.initUnchecked(2024, 6, 15); // June has 30 days
+    try std.testing.expectError(error.InvalidDay, parseWithReference("31st", ref));
+}
+
+test "parse '11th' works" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("11th", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 11), result.date);
 }
