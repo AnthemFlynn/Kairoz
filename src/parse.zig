@@ -77,6 +77,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return parsed;
     }
 
+    // Natural offsets: "in 3 days", "2 weeks ago"
+    if (parseNaturalOffset(lower, reference)) |parsed| {
+        return parsed;
+    }
+
     // Relative keywords
     if (std.mem.eql(u8, lower, "today")) {
         return .{ .date = reference };
@@ -270,6 +275,57 @@ fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedDate {
     }
     if (std.mem.eql(u8, str, "this year")) {
         return .{ .period = .{ .start = Date.initUnchecked(reference.year, 1, 1), .granularity = .year } };
+    }
+
+    return null;
+}
+
+/// Parse natural offset: "in 3 days", "2 weeks ago", etc.
+fn parseNaturalOffset(str: []const u8, reference: Date) ?ParsedDate {
+    // Try "in N <unit>" pattern
+    if (std.mem.startsWith(u8, str, "in ")) {
+        const rest = str[3..];
+        if (parseNaturalOffsetValue(rest, 1, reference)) |date| {
+            return .{ .date = date };
+        }
+    }
+
+    // Try "N <unit> ago" pattern
+    if (std.mem.endsWith(u8, str, " ago")) {
+        const rest = str[0 .. str.len - 4];
+        if (parseNaturalOffsetValue(rest, -1, reference)) |date| {
+            return .{ .date = date };
+        }
+    }
+
+    return null;
+}
+
+/// Parse "N <unit>" and apply with given sign multiplier
+fn parseNaturalOffsetValue(str: []const u8, sign: i32, reference: Date) ?Date {
+    // Find the space separating number and unit
+    const space_idx = std.mem.indexOf(u8, str, " ") orelse return null;
+
+    const num_str = str[0..space_idx];
+    const unit_str = str[space_idx + 1 ..];
+
+    const value = std.fmt.parseInt(u32, num_str, 10) catch return null;
+    if (value == 0) return null;
+
+    const signed_value: i32 = @as(i32, @intCast(value)) * sign;
+
+    // Match unit (singular or plural)
+    if (std.mem.eql(u8, unit_str, "day") or std.mem.eql(u8, unit_str, "days")) {
+        return addDaysInternal(reference, signed_value);
+    }
+    if (std.mem.eql(u8, unit_str, "week") or std.mem.eql(u8, unit_str, "weeks")) {
+        return addDaysInternal(reference, signed_value * 7);
+    }
+    if (std.mem.eql(u8, unit_str, "month") or std.mem.eql(u8, unit_str, "months")) {
+        return arithmetic.addMonths(reference, signed_value) catch return null;
+    }
+    if (std.mem.eql(u8, unit_str, "year") or std.mem.eql(u8, unit_str, "years")) {
+        return arithmetic.addYears(reference, signed_value) catch return null;
     }
 
     return null;
@@ -662,4 +718,52 @@ test "parse 'this year' returns period" {
     const result = try parseWithReference("this year", ref);
     try std.testing.expectEqual(Granularity.year, result.period.granularity);
     try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.period.start);
+}
+
+test "parse 'in 3 days'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("in 3 days", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 18), result.date);
+}
+
+test "parse 'in 2 weeks'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("in 2 weeks", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 29), result.date);
+}
+
+test "parse 'in 1 month'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("in 1 month", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 15), result.date);
+}
+
+test "parse 'in 1 year'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("in 1 year", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 1, 15), result.date);
+}
+
+test "parse '3 days ago'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("3 days ago", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 12), result.date);
+}
+
+test "parse '2 weeks ago'" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("2 weeks ago", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 1), result.date);
+}
+
+test "parse '1 month ago'" {
+    const ref = Date.initUnchecked(2024, 2, 15);
+    const result = try parseWithReference("1 month ago", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.date);
+}
+
+test "parse '1 year ago'" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("1 year ago", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2023, 6, 15), result.date);
 }
