@@ -14,14 +14,26 @@ Use the `/zig` skill for Zig development tasks. Additional Zig skills available:
 
 Kairoz (from καιρός — "the opportune moment") is a natural language date parsing library for Zig. Zero dependencies, stdlib only.
 
-**Target features (v0.1.0):**
-- Relative dates: today, tomorrow, yesterday
-- Weekday names: monday, mon, tuesday, tue, etc.
-- Forward offsets: +3d, +2w, +1m
-- Special values: next week, next month, none, clear
-- Absolute formats: YYYY-MM-DD, MM-DD, DD
-- Date arithmetic utilities
+**Current version: v0.2.0**
+
+**Features:**
+- Relative dates: `today`, `tomorrow`, `yesterday`
+- Weekday names: `monday`, `mon`, `next monday`, `last friday`
+- Forward/backward offsets: `+3d`, `-2w`, `+1m`, `-1y`
+- Natural offsets: `in 3 days`, `2 weeks ago`
+- Period references: `next week`, `this month`, `last year` (return `Period`)
+- Boundary expressions: `end of month`, `beginning of week`
+- Month names: `february`, `dec` (return `Period`)
+- Ordinal days: `1st`, `23rd`
+- Clear values: `none`, `clear`
+- Absolute formats: `YYYY-MM-DD`, `MM-DD`, `DD`, `2024` (bare year)
+- Date arithmetic: add days/months/years, week/month boundaries
 - Relative formatting for display
+
+**Key concept:** `ParsedDate` has three variants:
+- `.date` — specific date (e.g., "tomorrow")
+- `.period` — time span with granularity (e.g., "next month")
+- `.clear` — unset intent (e.g., "none")
 
 ## Build Commands
 
@@ -65,8 +77,12 @@ exe.root_module.addImport("kairoz", kairoz_dep.module("Kairoz"));
 
 ## Design Reference
 
-See `docs/plans/2026-01-13-kairoz-library-design.md` for the full API design, including:
+See `docs/plans/` for design documents:
+- `2026-01-13-kairoz-library-design.md` — Original v0.1.0 API design
+- `2026-01-13-kairoz-v0.2.0-design.md` — Period semantics and expanded parsing
+
+Key documentation:
 - Public API specification
-- Error types
-- Internal function signatures
-- Future version roadmap
+- Error types (`DateError`, `ParseError`, `ArithmeticError`)
+- `Period` struct with `start`, `granularity`, and `end()` method
+- `Granularity` enum: `.day`, `.week`, `.month`, `.year`
