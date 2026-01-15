@@ -37,8 +37,8 @@ Kairoz/
 |--------|---------|
 | `root.zig` | Public API surface — re-exports from other modules |
 | `Date.zig` | Core `Date` struct, validation, epoch day conversion |
-| `parse.zig` | Input parsing (keywords, offsets, absolute dates) |
-| `arithmetic.zig` | `addDays`, `addMonths`, `daysBetween` |
+| `parse.zig` | Input parsing, `Granularity`, `Period`, `ParsedDate` types |
+| `arithmetic.zig` | `addDays`, `addMonths`, `addYears`, week/month boundary helpers |
 | `format.zig` | `formatRelative` for human-readable output |
 
 ## Commands
@@ -77,8 +77,8 @@ zig test src/parse.zig
 
 ### Naming
 
-- Types: `PascalCase` (`Date`, `ParsedDate`)
-- Functions: `camelCase` (`parseWithReference`, `addMonths`)
+- Types: `PascalCase` (`Date`, `ParsedDate`, `Period`, `Granularity`)
+- Functions: `camelCase` (`parseWithReference`, `addMonths`, `startOfWeek`)
 - Constants: `snake_case` (`max_format_len`)
 
 ### Error Handling
@@ -129,7 +129,8 @@ test: add edge case for leap year boundary
 Key architectural choices documented in `docs/plans/`:
 
 - **Epoch day conversion** — Uses Howard Hinnant's algorithms for date math
-- **ParsedDate union** — Distinguishes between actual dates and "clear" intent
+- **ParsedDate union** — Three variants: `.date` (specific date), `.period` (time span), `.clear` (unset)
+- **Period semantics** — "next month" returns a `Period` preserving user intent, not an arbitrary date
 - **Error types** — Separate `DateError`, `ParseError`, `ArithmeticError` for precise handling
 - **No allocations** — All operations use stack memory or caller-provided buffers
 

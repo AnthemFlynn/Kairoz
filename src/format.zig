@@ -101,3 +101,14 @@ test "formatRelative returns full date for different year" {
     var buf: [max_format_len]u8 = undefined;
     try std.testing.expectEqualStrings("Jun 20, 2025", formatRelative(date, ref, &buf));
 }
+
+test "formatRelative handles period start" {
+    // Verifies formatting works correctly with dates that come from Period.start.
+    // When a Period represents "next month" from Jan 15, its start is Feb 1.
+    // Feb 1 is 17 days away (outside the 14-day window), so it shows "Feb 1".
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const period_start = Date.initUnchecked(2024, 2, 1);
+    var buf: [max_format_len]u8 = undefined;
+    const result = formatRelative(period_start, ref, &buf);
+    try std.testing.expectEqualStrings("Feb 1", result);
+}
