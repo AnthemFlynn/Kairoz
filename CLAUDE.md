@@ -14,7 +14,7 @@ Use the `/zig` skill for Zig development tasks. Additional Zig skills available:
 
 Kairoz (from καιρός — "the opportune moment") is a natural language date parsing library for Zig. Zero dependencies, stdlib only.
 
-**Current version: v0.2.0**
+**Current version: v0.2.1**
 
 **Features:**
 - Relative dates: `today`, `tomorrow`, `yesterday` (aliases: `tdy`, `tom`, `yest`)
