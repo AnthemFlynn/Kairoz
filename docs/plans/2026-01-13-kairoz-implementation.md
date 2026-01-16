@@ -1,10 +1,5 @@
 # Kairoz v0.1.0 Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILLS:
-> - Use `superpowers:test-driven-development` for ALL implementation work
-> - Use `/zig` skill for Zig-specific guidance
-> - After each feature branch: create PR, use `superpowers:requesting-code-review`, fix issues, merge to dev
-
 **Goal:** Implement Kairoz natural language date parsing library with modular architecture.
 
 **Architecture:** Four modules (Date.zig, arithmetic.zig, parse.zig, format.zig) with root.zig re-exporting public API. Clean dependency graph: Date is foundation, arithmetic and parse depend on Date, format depends on Date and arithmetic.
@@ -297,9 +292,7 @@ git commit -m "feat(Date): implement Date type with validation and today()
 - Date.initUnchecked() for internal known-valid construction
 - isLeapYear() and daysInMonth() helpers
 - today() returns current date from system clock
-- Comprehensive test coverage for edge cases
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- Comprehensive test coverage for edge cases"
 ```
 
 #### Step 11: PR and Review
@@ -581,9 +574,7 @@ git commit -m "feat(arithmetic): implement date arithmetic functions
 - addDays() for day-based arithmetic
 - addMonths() with day clamping for shorter months
 - daysBetween() for signed day difference
-- daysUntil() convenience wrapper
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- daysUntil() convenience wrapper"
 
 git push -u origin feature/arithmetic-module
 ```
@@ -806,9 +797,7 @@ git commit -m "feat(parse): implement keyword parsing (today, tomorrow, yesterda
 
 - ParsedDate tagged union for clear semantics
 - parseWithReference() for testable parsing
-- Case-insensitive, whitespace-trimmed input
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- Case-insensitive, whitespace-trimmed input"
 
 git push -u origin feature/parse-keywords
 ```
@@ -945,9 +934,7 @@ git add -A
 git commit -m "feat(parse): add weekday parsing (monday, mon, etc.)
 
 - Full and abbreviated weekday names
-- Always returns next occurrence (1-7 days ahead)
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- Always returns next occurrence (1-7 days ahead)"
 
 git push -u origin feature/parse-weekdays
 ```
@@ -1073,9 +1060,7 @@ git add -A
 git commit -m "feat(parse): add offset parsing (+3d, +2w, +1m)
 
 - Day, week, and month offsets
-- Month offset clamps day to valid range
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- Month offset clamps day to valid range"
 
 git push -u origin feature/parse-offsets
 ```
@@ -1193,9 +1178,7 @@ git commit -m "feat(parse): add absolute date formats (YYYY-MM-DD, MM-DD, DD)
 
 - Full ISO format
 - Month-day uses reference year
-- Day-only uses reference year and month
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- Day-only uses reference year and month"
 
 git push -u origin feature/parse-absolute
 ```
@@ -1357,9 +1340,7 @@ git commit -m "feat(format): implement formatRelative for display
 
 - Returns 'today', 'tomorrow', 'yesterday' for exact matches
 - 'in N days' / 'N days ago' for near dates
-- 'Mon DD' or 'Mon DD, YYYY' for distant dates
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- 'Mon DD' or 'Mon DD, YYYY' for distant dates"
 
 git push -u origin feature/format-module
 ```
@@ -1482,9 +1463,7 @@ git commit -m "feat: complete public API with integration tests
 
 - Full re-exports in root.zig
 - Module documentation
-- Integration tests for round-trip behavior
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+- Integration tests for round-trip behavior"
 
 git push -u origin feature/final-integration
 ```
