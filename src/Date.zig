@@ -140,8 +140,8 @@ test "epochDaysToDate known dates" {
 
 test "today returns valid current date" {
     const t = today();
-    // Sanity checks: year should be reasonable (2020+) and month/day valid
-    try std.testing.expect(t.year >= 2020);
+    // Sanity checks: year should be reasonable (2020-2100) and month/day valid
+    try std.testing.expect(t.year >= 2020 and t.year <= 2100);
     try std.testing.expect(t.month >= 1 and t.month <= 12);
     try std.testing.expect(t.day >= 1 and t.day <= 31);
 }
