@@ -87,14 +87,14 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
         return parsed;
     }
 
-    // Relative keywords
-    if (std.mem.eql(u8, lower, "today")) {
+    // Relative keywords (with shorthands)
+    if (std.mem.eql(u8, lower, "today") or std.mem.eql(u8, lower, "tdy")) {
         return .{ .date = reference };
     }
-    if (std.mem.eql(u8, lower, "tomorrow")) {
+    if (std.mem.eql(u8, lower, "tomorrow") or std.mem.eql(u8, lower, "tom")) {
         return .{ .date = addDaysInternal(reference, 1) };
     }
-    if (std.mem.eql(u8, lower, "yesterday")) {
+    if (std.mem.eql(u8, lower, "yesterday") or std.mem.eql(u8, lower, "yest")) {
         return .{ .date = addDaysInternal(reference, -1) };
     }
 
@@ -490,8 +490,9 @@ const OffsetUnit = enum { day, week, month, year };
 const Offset = struct { value: u32, unit: OffsetUnit, sign: i32 };
 
 /// Parse offset format: +Nd, +Nw, +Nm, +Ny, -Nd, -Nw, -Nm, -Ny
+/// Also supports unitless offsets: +N, -N (defaults to days)
 fn parseOffset(str: []const u8) (ParseError)!Offset {
-    if (str.len < 3) return error.InvalidFormat;
+    if (str.len < 2) return error.InvalidFormat;
 
     // Must start with + or -
     const sign: i32 = switch (str[0]) {
@@ -503,18 +504,23 @@ fn parseOffset(str: []const u8) (ParseError)!Offset {
     // Check for invalid characters after sign (like +-)
     if (str[1] == '-' or str[1] == '+') return error.InvalidFormat;
 
-    // Extract unit from last character
+    // Check if last character is a unit or a digit (unitless)
     const unit_char = str[str.len - 1];
-    const unit: OffsetUnit = switch (unit_char) {
+    const has_unit = switch (unit_char) {
+        'd', 'w', 'm', 'y' => true,
+        else => false,
+    };
+
+    const unit: OffsetUnit = if (has_unit) switch (unit_char) {
         'd' => .day,
         'w' => .week,
         'm' => .month,
         'y' => .year,
-        else => return error.InvalidFormat,
-    };
+        else => unreachable,
+    } else .day; // Default to days when no unit specified
 
-    // Parse the number between sign and unit
-    const num_str = str[1 .. str.len - 1];
+    // Parse the number (either between sign and unit, or after sign)
+    const num_str = if (has_unit) str[1 .. str.len - 1] else str[1..];
     if (num_str.len == 0) return error.InvalidFormat;
 
     const value = std.fmt.parseInt(u32, num_str, 10) catch return error.InvalidFormat;
@@ -1063,4 +1069,39 @@ test "parse '2025' as year period" {
 test "parse '0000' as year returns InvalidYear" {
     const ref = Date.initUnchecked(2024, 6, 15);
     try std.testing.expectError(error.InvalidYear, parseWithReference("0000", ref));
+}
+
+test "parse 'tom' as shorthand for tomorrow" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("tom", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 16), result.date);
+}
+
+test "parse 'tdy' as shorthand for today" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("tdy", ref);
+    try std.testing.expectEqual(ref, result.date);
+}
+
+test "parse 'yest' as shorthand for yesterday" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("yest", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 14), result.date);
+}
+
+test "parse '+3' defaults to days" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("+3", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 18), result.date);
+}
+
+test "parse '-5' defaults to days" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("-5", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 10), result.date);
+}
+
+test "parse '+0' returns InvalidOffset" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    try std.testing.expectError(error.InvalidOffset, parseWithReference("+0", ref));
 }
