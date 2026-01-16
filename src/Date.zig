@@ -44,9 +44,9 @@ pub fn daysInMonth(year: u16, month: u8) u8 {
 
 /// Returns current date from system clock.
 pub fn today() Date {
-    const ts = std.time.timestamp();
-    const epoch_secs: u64 = @intCast(ts);
-    const epoch_day = @divFloor(epoch_secs, 86400);
+    var tv: std.posix.timeval = undefined;
+    std.posix.gettimeofday(&tv, null);
+    const epoch_day = @divFloor(tv.sec, 86400);
     return epochDaysToDate(@intCast(epoch_day));
 }
 
@@ -136,4 +136,12 @@ test "epochDaysToDate known dates" {
     try std.testing.expectEqual(@as(u16, 2024), jan15.year);
     try std.testing.expectEqual(@as(u8, 1), jan15.month);
     try std.testing.expectEqual(@as(u8, 15), jan15.day);
+}
+
+test "today returns valid current date" {
+    const t = today();
+    // Sanity checks: year should be reasonable (2020+) and month/day valid
+    try std.testing.expect(t.year >= 2020);
+    try std.testing.expect(t.month >= 1 and t.month <= 12);
+    try std.testing.expect(t.day >= 1 and t.day <= 31);
 }
