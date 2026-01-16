@@ -8,10 +8,10 @@ A zero-dependency library for parsing human-friendly date expressions like "tomo
 
 ## Features
 
-- **Relative dates**: `today`, `tomorrow`, `yesterday`
+- **Relative dates**: `today`, `tomorrow`, `yesterday` (aliases: `tdy`, `tom`, `yest`)
 - **Weekday names**: `monday`, `mon`, `tuesday`, `tue`, etc.
 - **Weekday modifiers**: `next monday`, `last friday`
-- **Forward/backward offsets**: `+3d`, `-2w`, `+1m`, `-1y`
+- **Forward/backward offsets**: `+3d`, `-2w`, `+1m`, `-1y` (or unitless: `+3`, `-2`)
 - **Year offsets**: `+1y`, `+2y`, `-1y`
 - **Natural offsets**: `in 3 days`, `2 weeks ago`
 - **Period references**: `next week`, `this month`, `last year`
@@ -104,13 +104,14 @@ const year = try kairoz.parseWithReference("2025", ref);
 
 | Input | Result Type | Description |
 |-------|-------------|-------------|
-| `today` | Date | Current date |
-| `tomorrow` | Date | Next day |
-| `yesterday` | Date | Previous day |
+| `today`, `tdy` | Date | Current date |
+| `tomorrow`, `tom` | Date | Next day |
+| `yesterday`, `yest` | Date | Previous day |
 | `monday`, `mon` | Date | Next occurrence of weekday |
 | `next monday` | Date | Monday of next week |
 | `last friday` | Date | Most recent Friday |
 | `+3d`, `-3d` | Date | 3 days forward/backward |
+| `+3`, `-3` | Date | Unitless offset (defaults to days) |
 | `+2w`, `-2w` | Date | 2 weeks forward/backward |
 | `+1m`, `-1m` | Date | 1 month forward/backward |
 | `+1y`, `-1y` | Date | 1 year forward/backward |

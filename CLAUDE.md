@@ -17,9 +17,9 @@ Kairoz (from καιρός — "the opportune moment") is a natural language date
 **Current version: v0.2.0**
 
 **Features:**
-- Relative dates: `today`, `tomorrow`, `yesterday`
+- Relative dates: `today`, `tomorrow`, `yesterday` (aliases: `tdy`, `tom`, `yest`)
 - Weekday names: `monday`, `mon`, `next monday`, `last friday`
-- Forward/backward offsets: `+3d`, `-2w`, `+1m`, `-1y`
+- Forward/backward offsets: `+3d`, `-2w`, `+1m`, `-1y` (or unitless: `+3`, `-2`)
 - Natural offsets: `in 3 days`, `2 weeks ago`
 - Period references: `next week`, `this month`, `last year` (return `Period`)
 - Boundary expressions: `end of month`, `beginning of week`
