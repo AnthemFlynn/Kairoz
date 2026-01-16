@@ -16,7 +16,7 @@ Kairoz (from καιρός — "the opportune moment") is a natural language date
 
 **Current version: v0.2.1**
 
-**Minimum Zig version: 0.16.0** (uses `std.posix.gettimeofday`)
+**Minimum Zig version: 0.16.0** (cross-platform: POSIX + Windows)
 
 **Features:**
 - Relative dates: `today`, `tomorrow`, `yesterday` (aliases: `tdy`, `tom`, `yest`)

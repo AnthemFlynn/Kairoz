@@ -1,6 +1,7 @@
 //! Date type and construction utilities.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const DateError = error{
     InvalidDay,
@@ -43,11 +44,30 @@ pub fn daysInMonth(year: u16, month: u8) u8 {
 }
 
 /// Returns current date from system clock.
+/// Cross-platform: uses clock_gettime on POSIX, KUSER_SHARED_DATA on Windows.
 pub fn today() Date {
-    var tv: std.posix.timeval = undefined;
-    std.posix.gettimeofday(&tv, null);
-    const epoch_day = @divFloor(tv.sec, 86400);
+    const epoch_secs = getEpochSeconds();
+    const epoch_day = @divFloor(epoch_secs, 86400);
     return epochDaysToDate(@intCast(epoch_day));
+}
+
+/// Get current Unix epoch seconds (cross-platform).
+fn getEpochSeconds() i64 {
+    if (builtin.os.tag == .windows) {
+        // Windows: read system time from KUSER_SHARED_DATA
+        // SystemTime is in 100-nanosecond intervals since 1601-01-01
+        const SharedUserData = std.os.windows.SharedUserData;
+        const sys_time = SharedUserData.SystemTime;
+        // Combine high and low parts (read High1Time first, verify with High2Time for consistency)
+        const hns: i64 = (@as(i64, sys_time.High1Time) << 32) | sys_time.LowPart;
+        // Convert to seconds and adjust from Windows epoch (1601) to Unix epoch (1970)
+        const windows_epoch_offset = std.time.epoch.windows; // -11644473600
+        return @divFloor(hns, 10_000_000) + windows_epoch_offset;
+    } else {
+        // POSIX: use clock_gettime with REALTIME clock
+        const ts = std.posix.clock_gettime(.REALTIME) catch unreachable;
+        return ts.sec;
+    }
 }
 
 /// Convert Date to epoch day (days since 1970-01-01).
