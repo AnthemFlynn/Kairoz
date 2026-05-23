@@ -53,13 +53,24 @@ pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!Parse
     return parseWithReference(str, today_fn());
 }
 
+/// Maximum length of an input expression accepted by the parser.
+/// The longest natural-language keyword the parser currently recognises is
+/// `"beginning of next month"` (23 chars); 64 bytes leaves generous headroom
+/// for whitespace and ISO dates while keeping the on-stack lowercase buffer
+/// small. Inputs longer than this are rejected as InvalidFormat rather than
+/// silently truncated, which would risk a long input aliasing to a short
+/// keyword prefix.
+pub const max_input_len: usize = 64;
+
 /// Parse date string with explicit reference date (for testing).
 pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError || ArithmeticError)!ParsedDate {
     const trimmed = std.mem.trim(u8, str, " \t\n\r");
     if (trimmed.len == 0) return error.InvalidFormat;
+    if (trimmed.len > max_input_len) return error.InvalidFormat;
 
-    // Normalize to lowercase
-    var lower_buf: [64]u8 = undefined;
+    // Normalize to lowercase. trimmed.len <= max_input_len is guaranteed above,
+    // so the buffer is always large enough to hold the full input.
+    var lower_buf: [max_input_len]u8 = undefined;
     const lower = toLower(trimmed, &lower_buf);
 
     // Clear keywords
@@ -127,11 +138,11 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
 }
 
 fn toLower(str: []const u8, buf: []u8) []const u8 {
-    const len = @min(str.len, buf.len);
-    for (str[0..len], 0..) |c, i| {
+    std.debug.assert(str.len <= buf.len);
+    for (str, 0..) |c, i| {
         buf[i] = std.ascii.toLower(c);
     }
-    return buf[0..len];
+    return buf[0..str.len];
 }
 
 fn addDaysInternal(date: Date, days: i32) Date {
@@ -1104,4 +1115,14 @@ test "parse '-5' defaults to days" {
 test "parse '+0' returns InvalidOffset" {
     const ref = Date.initUnchecked(2024, 1, 15);
     try std.testing.expectError(error.InvalidOffset, parseWithReference("+0", ref));
+}
+
+test "parse rejects overlong input instead of truncating" {
+    // A naive lowercase-into-fixed-buffer would truncate this to "today" + padding
+    // and accept it. The length guard must reject it as InvalidFormat instead.
+    const ref = Date.initUnchecked(2024, 1, 15);
+    var long: [max_input_len + 1]u8 = undefined;
+    @memset(&long, 'x');
+    @memcpy(long[0..5], "today");
+    try std.testing.expectError(error.InvalidFormat, parseWithReference(&long, ref));
 }

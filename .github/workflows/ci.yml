@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Build & test (Zig ${{ matrix.zig }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        zig: ["0.16.0"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig ${{ matrix.zig }}
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ matrix.zig }}
+
+      - name: Build
+        run: zig build
+
+      - name: Test
+        run: zig build test

@@ -2,6 +2,9 @@
 //!
 //! A zero-dependency library for parsing human-friendly date expressions.
 
+/// Library version. Kept in sync with `build.zig.zon` manually.
+pub const version = "0.2.1";
+
 pub const Date = @import("Date.zig").Date;
 pub const DateError = @import("Date.zig").DateError;
 pub const today = @import("Date.zig").today;
