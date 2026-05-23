@@ -32,9 +32,14 @@ Kairoz (from καιρός — "the opportune moment") is a natural language date
 - Date arithmetic: add days/months/years, week/month boundaries
 - Relative formatting for display
 
-**Key concept:** `ParsedDate` has three variants:
-- `.date` — specific date (e.g., "tomorrow")
-- `.period` — time span with granularity (e.g., "next month")
+**Key concept:** `ParsedTemporal` is a tagged union over every possible parse result:
+- `.date` — specific calendar date (e.g., "tomorrow")
+- `.datetime` — naive date + time-of-day (e.g., "tomorrow at 2pm")
+- `.zoned` — TZ-aware moment (e.g., "2024-06-15T14:30:00+09:00")
+- `.instant` — absolute UTC moment (rare; mainly an output type)
+- `.period` — implicit time span with granularity (e.g., "next month")
+- `.range` — explicit start/end date range (e.g., "jan 15 to feb 1")
+- `.duration` — unanchored time delta (e.g., "in 5 min" without reference)
 - `.clear` — unset intent (e.g., "none")
 
 ## Build Commands
@@ -52,7 +57,14 @@ The project ships a single Zig module for consumers:
 
 - **`src/root.zig`** — Public API surface, re-exporting from the modules below.
 - **`src/Date.zig`** — `Date` struct, validation, leap-year/days-in-month helpers, `today()`.
-- **`src/parse.zig`** — Natural-language parsing, `ParsedDate`, `Period`, `Granularity`.
+- **`src/Time.zig`** — naive time-of-day with nanosecond precision.
+- **`src/DateTime.zig`** — naive Date + Time pairing.
+- **`src/Duration.zig`** — signed duration with nanosecond precision.
+- **`src/Instant.zig`** — absolute UTC moment, owns the cross-platform clock read.
+- **`src/TimeZone.zig`** — fixed-offset time zone (no IANA in v0.3.0).
+- **`src/ZonedDateTime.zig`** — DateTime + TimeZone with Instant round-trip.
+- **`src/DateRange.zig`** — explicit calendar range with inclusive endpoints.
+- **`src/parse.zig`** — Natural-language parsing, `ParsedTemporal`, `Period`, `Granularity`.
 - **`src/arithmetic.zig`** — `addDays`/`addMonths`/`addYears`, week and month boundaries.
 - **`src/format.zig`** — `formatRelative` for human-readable output.
 

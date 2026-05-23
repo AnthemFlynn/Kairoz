@@ -37,7 +37,7 @@ Kairoz/
 |--------|---------|
 | `root.zig` | Public API surface — re-exports from other modules |
 | `Date.zig` | Core `Date` struct, validation, epoch day conversion |
-| `parse.zig` | Input parsing, `Granularity`, `Period`, `ParsedDate` types |
+| `parse.zig` | Input parsing, `Granularity`, `Period`, `ParsedTemporal` types |
 | `arithmetic.zig` | `addDays`, `addMonths`, `addYears`, week/month boundary helpers |
 | `format.zig` | `formatRelative` for human-readable output |
 
@@ -76,7 +76,7 @@ zig test src/parse.zig
 
 ### Naming
 
-- Types: `PascalCase` (`Date`, `ParsedDate`, `Period`, `Granularity`)
+- Types: `PascalCase` (`Date`, `ParsedTemporal`, `Period`, `Granularity`)
 - Functions: `camelCase` (`parseWithReference`, `addMonths`, `startOfWeek`)
 - Constants: `snake_case` (`max_format_len`)
 
@@ -98,8 +98,8 @@ Public functions should have doc comments:
 
 ```zig
 /// Parse date string with explicit reference date.
-/// Returns `ParsedDate.clear` for "none" or "clear" inputs.
-pub fn parseWithReference(str: []const u8, reference: Date) !ParsedDate
+/// Returns `ParsedTemporal.clear` for "none" or "clear" inputs.
+pub fn parseWithReference(str: []const u8, reference: Date) !ParsedTemporal
 ```
 
 ## Making Changes
@@ -128,7 +128,7 @@ test: add edge case for leap year boundary
 Key architectural choices documented in `docs/plans/`:
 
 - **Epoch day conversion** — Uses Howard Hinnant's algorithms for date math
-- **ParsedDate union** — Three variants: `.date` (specific date), `.period` (time span), `.clear` (unset)
+- **ParsedTemporal union** — Three variants: `.date` (specific date), `.period` (time span), `.clear` (unset)
 - **Period semantics** — "next month" returns a `Period` preserving user intent, not an arbitrary date
 - **Error types** — Separate `DateError`, `ParseError`, `ArithmeticError` for precise handling
 - **No allocations** — All operations use stack memory or caller-provided buffers

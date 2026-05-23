@@ -2,6 +2,13 @@
 
 const std = @import("std");
 const Date = @import("Date.zig");
+const Time = @import("Time.zig");
+const DateTime = @import("DateTime.zig");
+const Duration = @import("Duration.zig");
+const Instant = @import("Instant.zig");
+const TimeZone = @import("TimeZone.zig");
+const ZonedDateTime = @import("ZonedDateTime.zig");
+const DateRange = @import("DateRange.zig");
 const DateError = Date.DateError;
 const today_fn = Date.today;
 const dateToEpochDays = Date.dateToEpochDays;
@@ -41,14 +48,28 @@ pub const Period = struct {
     }
 };
 
-pub const ParsedDate = union(enum) {
+/// Result of parsing a natural-language temporal expression.
+///
+/// The variant returned reflects the richest type the input justified:
+/// a bare weekday returns `.date`; `"next month"` returns `.period`;
+/// `"tomorrow at 2pm"` returns `.datetime`; an offset-bearing ISO 8601
+/// timestamp returns `.zoned`; `"in 5 min"` with no reference returns
+/// `.duration`; `"jan 15 to feb 1"` returns `.range`.
+///
+/// Renamed from `ParsedTemporal` in v0.3.0 to reflect the broader scope.
+pub const ParsedTemporal = union(enum) {
     date: Date,
+    datetime: DateTime,
+    zoned: ZonedDateTime,
+    instant: Instant,
     period: Period,
+    range: DateRange,
+    duration: Duration,
     clear,
 };
 
 /// Parse date string using current system date as reference.
-pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!ParsedDate {
+pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!ParsedTemporal {
     return parseWithReference(str, today_fn());
 }
 
@@ -62,7 +83,7 @@ pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!Parse
 pub const max_input_len: usize = 64;
 
 /// Parse date string with explicit reference date (for testing).
-pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError || ArithmeticError)!ParsedDate {
+pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError || ArithmeticError)!ParsedTemporal {
     const trimmed = std.mem.trim(u8, str, " \t\n\r");
     if (trimmed.len == 0) return error.InvalidFormat;
     if (trimmed.len > max_input_len) return error.InvalidFormat;
@@ -149,7 +170,7 @@ fn addDaysInternal(date: Date, days: i32) Date {
 }
 
 /// Parse absolute date formats: YYYY-MM-DD, MM-DD, DD, YYYY
-fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)!ParsedDate {
+fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)!ParsedTemporal {
     // Check for YYYY-MM-DD format (length 10, dashes at positions 4 and 7)
     if (str.len == 10 and str[4] == '-' and str[7] == '-') {
         const year = std.fmt.parseInt(u16, str[0..4], 10) catch return error.InvalidFormat;
@@ -274,7 +295,7 @@ fn parseWeekdayModifier(str: []const u8, reference: Date) ?Date {
 }
 
 /// Parse period references: "next week", "last month", "this year", etc.
-fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedDate {
+fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedTemporal {
     // Week references
     if (std.mem.eql(u8, str, "next week")) {
         const this_monday = arithmetic.startOfWeek(reference);
@@ -321,7 +342,7 @@ fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedDate {
 }
 
 /// Parse natural offset: "in 3 days", "2 weeks ago", etc.
-fn parseNaturalOffset(str: []const u8, reference: Date) ?ParsedDate {
+fn parseNaturalOffset(str: []const u8, reference: Date) ?ParsedTemporal {
     // Try "in N <unit>" pattern
     if (std.mem.startsWith(u8, str, "in ")) {
         const rest = str[3..];
@@ -447,7 +468,7 @@ fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
 }
 
 /// Parse month name and return as period.
-fn parseMonthName(str: []const u8, reference: Date) ?ParsedDate {
+fn parseMonthName(str: []const u8, reference: Date) ?ParsedTemporal {
     const months = [_]struct { full: []const u8, abbrev: []const u8, month: u8 }{
         .{ .full = "january", .abbrev = "jan", .month = 1 },
         .{ .full = "february", .abbrev = "feb", .month = 2 },
@@ -575,13 +596,13 @@ test "parse 'yesterday' returns previous day" {
 test "parse 'none' returns clear" {
     const ref = Date.initUnchecked(2024, 1, 15);
     const result = try parseWithReference("none", ref);
-    try std.testing.expectEqual(ParsedDate.clear, result);
+    try std.testing.expectEqual(ParsedTemporal.clear, result);
 }
 
 test "parse 'clear' returns clear" {
     const ref = Date.initUnchecked(2024, 1, 15);
     const result = try parseWithReference("clear", ref);
-    try std.testing.expectEqual(ParsedDate.clear, result);
+    try std.testing.expectEqual(ParsedTemporal.clear, result);
 }
 
 test "parse is case insensitive" {

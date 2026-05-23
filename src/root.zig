@@ -25,7 +25,9 @@ pub const TimeZoneError = TimeZone.TimeZoneError;
 
 pub const ZonedDateTime = @import("ZonedDateTime.zig");
 
-pub const ParsedDate = @import("parse.zig").ParsedDate;
+pub const ParsedTemporal = @import("parse.zig").ParsedTemporal;
+pub const DateRange = @import("DateRange.zig");
+pub const DateRangeError = DateRange.DateRangeError;
 pub const ParseError = @import("parse.zig").ParseError;
 pub const Granularity = @import("parse.zig").Granularity;
 pub const Period = @import("parse.zig").Period;
@@ -55,6 +57,7 @@ test {
     _ = @import("Instant.zig");
     _ = @import("TimeZone.zig");
     _ = @import("ZonedDateTime.zig");
+    _ = @import("DateRange.zig");
     _ = @import("parse.zig");
     _ = @import("arithmetic.zig");
     _ = @import("format.zig");

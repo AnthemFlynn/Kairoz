@@ -195,7 +195,7 @@ Output examples:
 ### Types
 
 - `Date` — Year (u16), month (u8), day (u8)
-- `ParsedDate` — Union: `.date`, `.period`, or `.clear`
+- `ParsedTemporal` — Union over all possible parse results (renamed from `ParsedDate` in v0.3.0)
 - `Period` — A time span with `start: Date` and `granularity: Granularity`
 - `Granularity` — Enum: `.day`, `.week`, `.month`, `.year`
 - `DateError` — `InvalidYear`, `InvalidMonth`, `InvalidDay`
