@@ -776,17 +776,17 @@ fn parseWeekdayModifier(str: []const u8, reference: Date) ?Date {
 fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedTemporal {
     // Week references
     if (std.mem.eql(u8, str, "next week")) {
-        const this_monday = arithmetic.startOfWeek(reference);
+        const this_monday = arithmetic.startOfWeek(reference, .monday);
         const next_monday = addDaysInternal(this_monday, 7);
         return .{ .period = .{ .start = next_monday, .granularity = .week } };
     }
     if (std.mem.eql(u8, str, "last week")) {
-        const this_monday = arithmetic.startOfWeek(reference);
+        const this_monday = arithmetic.startOfWeek(reference, .monday);
         const last_monday = addDaysInternal(this_monday, -7);
         return .{ .period = .{ .start = last_monday, .granularity = .week } };
     }
     if (std.mem.eql(u8, str, "this week")) {
-        const this_monday = arithmetic.startOfWeek(reference);
+        const this_monday = arithmetic.startOfWeek(reference, .monday);
         return .{ .period = .{ .start = this_monday, .granularity = .week } };
     }
 
@@ -905,10 +905,10 @@ fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
         return arithmetic.firstDayOfMonth(reference);
     }
     if (std.mem.eql(u8, str, "end of week")) {
-        return arithmetic.endOfWeek(reference);
+        return arithmetic.endOfWeek(reference, .monday);
     }
     if (std.mem.eql(u8, str, "beginning of week")) {
-        return arithmetic.startOfWeek(reference);
+        return arithmetic.startOfWeek(reference, .monday);
     }
     if (std.mem.eql(u8, str, "end of year")) {
         return Date.initUnchecked(reference.year, 12, 31);
@@ -927,11 +927,11 @@ fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
         return arithmetic.firstDayOfMonth(next);
     }
     if (std.mem.eql(u8, str, "end of next week")) {
-        const next_monday = addDaysInternal(arithmetic.startOfWeek(reference), 7);
-        return arithmetic.endOfWeek(next_monday);
+        const next_monday = addDaysInternal(arithmetic.startOfWeek(reference, .monday), 7);
+        return arithmetic.endOfWeek(next_monday, .monday);
     }
     if (std.mem.eql(u8, str, "beginning of next week")) {
-        return addDaysInternal(arithmetic.startOfWeek(reference), 7);
+        return addDaysInternal(arithmetic.startOfWeek(reference, .monday), 7);
     }
     if (std.mem.eql(u8, str, "end of next year")) {
         const next = arithmetic.addYears(reference, 1) catch return null;
@@ -952,11 +952,11 @@ fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
         return arithmetic.firstDayOfMonth(prev);
     }
     if (std.mem.eql(u8, str, "end of last week")) {
-        const last_monday = addDaysInternal(arithmetic.startOfWeek(reference), -7);
-        return arithmetic.endOfWeek(last_monday);
+        const last_monday = addDaysInternal(arithmetic.startOfWeek(reference, .monday), -7);
+        return arithmetic.endOfWeek(last_monday, .monday);
     }
     if (std.mem.eql(u8, str, "beginning of last week")) {
-        return addDaysInternal(arithmetic.startOfWeek(reference), -7);
+        return addDaysInternal(arithmetic.startOfWeek(reference, .monday), -7);
     }
     if (std.mem.eql(u8, str, "end of last year")) {
         const prev = arithmetic.addYears(reference, -1) catch return null;

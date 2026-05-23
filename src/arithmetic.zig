@@ -60,21 +60,38 @@ pub fn lastDayOfMonth(date: Date) Date {
     return Date.initUnchecked(date.year, date.month, daysInMonth(date.year, date.month));
 }
 
+/// Which day a week starts on for week-boundary calculations.
+///
+/// Locale matters: ISO 8601 and most of Europe/Asia treat Monday as the
+/// first day; US/Canada/Japan calendars treat Sunday. Pass the choice
+/// explicitly rather than baking a default into the library.
+pub const WeekStart = enum { monday, sunday };
+
 /// Get day of week (0=Monday, 6=Sunday).
 pub fn dayOfWeek(date: Date) u8 {
     return @intCast(@mod(dateToEpochDays(date) + 3, 7));
 }
 
-/// Get the Monday of the week containing this date.
-pub fn startOfWeek(date: Date) Date {
-    const dow = dayOfWeek(date);
-    return addDays(date, -@as(i32, dow));
+/// Position of `date` within a week that begins on `week_start`.
+/// Returns 0 for the first day of the week.
+fn weekPosition(date: Date, week_start: WeekStart) u8 {
+    const dow = dayOfWeek(date); // 0=Mon..6=Sun
+    return switch (week_start) {
+        .monday => dow,
+        .sunday => (dow + 1) % 7,
+    };
 }
 
-/// Get the Sunday of the week containing this date.
-pub fn endOfWeek(date: Date) Date {
-    const dow = dayOfWeek(date);
-    return addDays(date, @as(i32, 6 - dow));
+/// Get the first day of the week containing this date, given a `WeekStart`.
+pub fn startOfWeek(date: Date, week_start: WeekStart) Date {
+    const pos = weekPosition(date, week_start);
+    return addDays(date, -@as(i32, pos));
+}
+
+/// Get the last day of the week containing this date, given a `WeekStart`.
+pub fn endOfWeek(date: Date, week_start: WeekStart) Date {
+    const pos = weekPosition(date, week_start);
+    return addDays(date, @as(i32, 6 - pos));
 }
 
 /// Add (or subtract) years from a date. Day is clamped if Feb 29 in non-leap year.
@@ -224,34 +241,75 @@ test "dayOfWeek calculation" {
     try std.testing.expectEqual(@as(u8, 6), dayOfWeek(Date.initUnchecked(2024, 1, 21)));
 }
 
-test "startOfWeek returns Monday" {
+test "startOfWeek monday-start returns Monday" {
     // Wednesday Jan 17, 2024 -> Monday Jan 15, 2024
     try std.testing.expectEqual(
         Date.initUnchecked(2024, 1, 15),
-        startOfWeek(Date.initUnchecked(2024, 1, 17)),
+        startOfWeek(Date.initUnchecked(2024, 1, 17), .monday),
     );
     // Monday stays Monday
     try std.testing.expectEqual(
         Date.initUnchecked(2024, 1, 15),
-        startOfWeek(Date.initUnchecked(2024, 1, 15)),
+        startOfWeek(Date.initUnchecked(2024, 1, 15), .monday),
     );
     // Sunday Jan 21 -> Monday Jan 15
     try std.testing.expectEqual(
         Date.initUnchecked(2024, 1, 15),
-        startOfWeek(Date.initUnchecked(2024, 1, 21)),
+        startOfWeek(Date.initUnchecked(2024, 1, 21), .monday),
     );
 }
 
-test "endOfWeek returns Sunday" {
+test "startOfWeek sunday-start returns Sunday" {
+    // Wednesday Jan 17, 2024 -> Sunday Jan 14, 2024
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 14),
+        startOfWeek(Date.initUnchecked(2024, 1, 17), .sunday),
+    );
+    // Sunday stays Sunday
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 14),
+        startOfWeek(Date.initUnchecked(2024, 1, 14), .sunday),
+    );
+    // Monday Jan 15 -> Sunday Jan 14
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 14),
+        startOfWeek(Date.initUnchecked(2024, 1, 15), .sunday),
+    );
+    // Saturday Jan 20 -> Sunday Jan 14
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 14),
+        startOfWeek(Date.initUnchecked(2024, 1, 20), .sunday),
+    );
+}
+
+test "endOfWeek monday-start returns Sunday" {
     // Wednesday Jan 17, 2024 -> Sunday Jan 21, 2024
     try std.testing.expectEqual(
         Date.initUnchecked(2024, 1, 21),
-        endOfWeek(Date.initUnchecked(2024, 1, 17)),
+        endOfWeek(Date.initUnchecked(2024, 1, 17), .monday),
     );
     // Sunday stays Sunday
     try std.testing.expectEqual(
         Date.initUnchecked(2024, 1, 21),
-        endOfWeek(Date.initUnchecked(2024, 1, 21)),
+        endOfWeek(Date.initUnchecked(2024, 1, 21), .monday),
+    );
+}
+
+test "endOfWeek sunday-start returns Saturday" {
+    // Wednesday Jan 17, 2024 -> Saturday Jan 20, 2024
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 20),
+        endOfWeek(Date.initUnchecked(2024, 1, 17), .sunday),
+    );
+    // Saturday stays Saturday
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 20),
+        endOfWeek(Date.initUnchecked(2024, 1, 20), .sunday),
+    );
+    // Sunday Jan 14 -> Saturday Jan 20
+    try std.testing.expectEqual(
+        Date.initUnchecked(2024, 1, 20),
+        endOfWeek(Date.initUnchecked(2024, 1, 14), .sunday),
     );
 }
 

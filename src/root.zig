@@ -3,7 +3,7 @@
 //! A zero-dependency library for parsing human-friendly date expressions.
 
 /// Library version. Kept in sync with `build.zig.zon` manually.
-pub const version = "0.2.1";
+pub const version = "0.3.0";
 
 pub const Date = @import("Date.zig");
 pub const DateError = Date.DateError;
@@ -35,6 +35,7 @@ pub const parse = @import("parse.zig").parse;
 pub const parseWithReference = @import("parse.zig").parseWithReference;
 
 pub const ArithmeticError = @import("arithmetic.zig").ArithmeticError;
+pub const WeekStart = @import("arithmetic.zig").WeekStart;
 pub const addDays = @import("arithmetic.zig").addDays;
 pub const addMonths = @import("arithmetic.zig").addMonths;
 pub const addYears = @import("arithmetic.zig").addYears;

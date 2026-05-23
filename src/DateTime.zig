@@ -23,6 +23,14 @@ pub fn init(date: Date, time: Time) DateTime {
     return .{ .date = date, .time = time };
 }
 
+/// Current UTC datetime from the system clock. Convenience wrapper
+/// around `Instant.now().toUtcDateTime()`. For local-zone datetimes,
+/// build a `ZonedDateTime` with `ZonedDateTime.now(zone)` instead.
+pub fn now() DateTime {
+    const Instant = @import("Instant.zig");
+    return Instant.now().toUtcDateTime();
+}
+
 /// DateTime at 00:00:00 on the given date.
 pub fn atMidnight(date: Date) DateTime {
     return .{ .date = date, .time = Time.midnight };
@@ -158,6 +166,14 @@ test "DateTime.addDuration with nanoseconds carry" {
     const result = dt.addDuration(Duration.fromMilliseconds(500));
     try std.testing.expectEqual(@as(u8, 1), result.time.second);
     try std.testing.expectEqual(@as(u32, 200_000_000), result.time.nanosecond);
+}
+
+test "DateTime.now returns current UTC datetime" {
+    const dt = now();
+    // Sanity: current year is reasonable.
+    try std.testing.expect(dt.date.year >= 2026);
+    try std.testing.expect(dt.date.year < 2100);
+    try std.testing.expect(dt.time.hour < 24);
 }
 
 test "DateTime.subDuration is inverse of addDuration" {
