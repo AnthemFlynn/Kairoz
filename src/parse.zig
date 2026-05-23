@@ -135,6 +135,18 @@ fn parseWithDateRef(str: []const u8, reference: Date) ParseFullError!ParsedTempo
         return .clear;
     }
 
+    // ISO 8601 datetime. Returns the richest variant the input
+    // expressed regardless of the (Date-only) reference type.
+    if (parseIsoDateTime(trimmed)) |iso| {
+        if (iso.zone) |z| {
+            return .{ .zoned = ZonedDateTime.init(iso.datetime, z) };
+        }
+        return .{ .datetime = iso.datetime };
+    } else |err| switch (err) {
+        error.NotIsoDateTime => {},
+        else => |e| return e,
+    }
+
     // Explicit date ranges: "jan 15 to feb 1", "2024-06-01..2024-06-30",
     // "between today and friday", "from monday to friday",
     // "next 3 days", "last 7 days".
@@ -220,10 +232,14 @@ fn parseWithDateTimeRef(str: []const u8, reference: DateTime) ParseFullError!Par
     var lower_buf: [max_input_len]u8 = undefined;
     const lower = toLower(trimmed, &lower_buf);
 
-    // ISO 8601 datetime without offset, e.g. "2024-06-15T14:30:00".
-    // Offset-bearing forms are handled in parseWithZonedRef.
-    if (parseIsoDateTime(trimmed)) |dt| {
-        return .{ .datetime = dt };
+    // ISO 8601 datetime (with or without offset). If the input carries
+    // an offset, the result is `.zoned` regardless of ref type — the
+    // offset is canonical and we don't second-guess it.
+    if (parseIsoDateTime(trimmed)) |iso| {
+        if (iso.zone) |z| {
+            return .{ .zoned = ZonedDateTime.init(iso.datetime, z) };
+        }
+        return .{ .datetime = iso.datetime };
     } else |err| switch (err) {
         error.NotIsoDateTime => {},
         else => |e| return e,
@@ -265,9 +281,11 @@ fn parseWithZonedRef(str: []const u8, reference: ZonedDateTime) ParseFullError!P
     var lower_buf: [max_input_len]u8 = undefined;
     const lower = toLower(trimmed, &lower_buf);
 
-    // ISO 8601 datetime without offset → wear the reference's zone.
-    if (parseIsoDateTime(trimmed)) |dt| {
-        return .{ .zoned = ZonedDateTime.init(dt, reference.zone) };
+    // ISO 8601 datetime. If the input carries its own offset, use it.
+    // Otherwise apply the reference's zone.
+    if (parseIsoDateTime(trimmed)) |iso| {
+        const zone = iso.zone orelse reference.zone;
+        return .{ .zoned = ZonedDateTime.init(iso.datetime, zone) };
     } else |err| switch (err) {
         error.NotIsoDateTime => {},
         else => |e| return e,
@@ -439,14 +457,23 @@ fn parseDatePart(str: []const u8, reference: Date) ParseFullError!?Date {
     };
 }
 
-const IsoDateTimeError = error{NotIsoDateTime} || DateError || Time.TimeError;
+const IsoDateTimeError = error{NotIsoDateTime} || DateError || Time.TimeError || TimeZone.TimeZoneError;
 
-/// Parse ISO 8601 local datetime (no offset). Accepted shapes:
+/// Result of parsing an ISO 8601 timestamp. When `zone` is null the
+/// input was a local (naive) datetime; when present the input carried
+/// either a `Z` (UTC) or an `±HH:MM` / `±HHMM` offset suffix.
+const IsoParsed = struct {
+    datetime: DateTime,
+    zone: ?TimeZone,
+};
+
+/// Parse ISO 8601 datetime, with or without offset. Accepted shapes:
 ///   YYYY-MM-DDTHH:MM
 ///   YYYY-MM-DDTHH:MM:SS
 ///   YYYY-MM-DDTHH:MM:SS.<fractional seconds, 1..9 digits>
+///   any of the above + `Z` | `+HH:MM` | `-HH:MM` | `+HHMM` | `-HHMM`
 /// Also tolerates a space instead of `T` (RFC 3339 §5.6 NOTE).
-fn parseIsoDateTime(str: []const u8) IsoDateTimeError!DateTime {
+fn parseIsoDateTime(str: []const u8) IsoDateTimeError!IsoParsed {
     if (str.len < 16) return error.NotIsoDateTime;
     if (str[4] != '-' or str[7] != '-') return error.NotIsoDateTime;
     if (str[10] != 'T' and str[10] != 't' and str[10] != ' ') return error.NotIsoDateTime;
@@ -488,12 +515,39 @@ fn parseIsoDateTime(str: []const u8) IsoDateTimeError!DateTime {
         }
     }
 
-    // Anything left over means this isn't a bare ISO local datetime
-    // (likely an offset that the Zoned parser handles).
+    const time = try Time.initFull(hour, minute, second, nanosecond);
+
+    // Optional offset suffix: 'Z', '+HH:MM', '-HH:MM', '+HHMM', '-HHMM'.
+    var zone: ?TimeZone = null;
+    if (idx < str.len) {
+        const tail = str[idx..];
+        if (tail.len == 1 and (tail[0] == 'Z' or tail[0] == 'z')) {
+            zone = TimeZone.utc;
+            idx = str.len;
+        } else if (tail.len == 6 and (tail[0] == '+' or tail[0] == '-') and tail[3] == ':') {
+            // ±HH:MM
+            const sign: i32 = if (tail[0] == '+') 1 else -1;
+            const hh = std.fmt.parseInt(u8, tail[1..3], 10) catch return error.NotIsoDateTime;
+            const mm = std.fmt.parseInt(u8, tail[4..6], 10) catch return error.NotIsoDateTime;
+            if (hh > 23 or mm > 59) return error.NotIsoDateTime;
+            zone = try TimeZone.fromSeconds(sign * (@as(i32, hh) * 3_600 + @as(i32, mm) * 60));
+            idx = str.len;
+        } else if (tail.len == 5 and (tail[0] == '+' or tail[0] == '-')) {
+            // ±HHMM
+            const sign: i32 = if (tail[0] == '+') 1 else -1;
+            const hh = std.fmt.parseInt(u8, tail[1..3], 10) catch return error.NotIsoDateTime;
+            const mm = std.fmt.parseInt(u8, tail[3..5], 10) catch return error.NotIsoDateTime;
+            if (hh > 23 or mm > 59) return error.NotIsoDateTime;
+            zone = try TimeZone.fromSeconds(sign * (@as(i32, hh) * 3_600 + @as(i32, mm) * 60));
+            idx = str.len;
+        } else {
+            return error.NotIsoDateTime;
+        }
+    }
+
     if (idx != str.len) return error.NotIsoDateTime;
 
-    const time = try Time.initFull(hour, minute, second, nanosecond);
-    return DateTime.init(date, time);
+    return .{ .datetime = DateTime.init(date, time), .zone = zone };
 }
 
 /// Anchor a bare time-of-day onto a DateTime reference.
@@ -2114,4 +2168,106 @@ test "parse 'in 2 hrs' short plural" {
     const ref = Date.initUnchecked(2024, 6, 15);
     const result = try parseWithReference("in 2 hrs", ref);
     try std.testing.expectEqual(@as(i64, 7_200), result.duration.seconds);
+}
+
+// ============ ISO 8601 with offset (Phase H) ============
+
+test "parse ISO with Z suffix returns .zoned at UTC" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00Z", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, 0), result.zoned.zone.offset_seconds);
+    try std.testing.expectEqual(@as(u8, 14), result.zoned.datetime.time.hour);
+}
+
+test "parse ISO with lowercase z suffix" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00z", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, 0), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO with +09:00 offset (JST)" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00+09:00", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, 9 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO with -05:00 offset (EST)" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00-05:00", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, -5 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO with +05:30 half-hour offset (IST)" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00+05:30", ref);
+    try std.testing.expectEqual(@as(i32, 5 * 3600 + 30 * 60), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO with +0900 compact offset" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00+0900", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, 9 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO with fractional seconds and offset" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30:00.500+09:00", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(u32, 500_000_000), result.zoned.datetime.time.nanosecond);
+    try std.testing.expectEqual(@as(i32, 9 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO without seconds and with offset" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-15T14:30+09:00", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(u8, 14), result.zoned.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.zoned.datetime.time.minute);
+    try std.testing.expectEqual(@as(u8, 0), result.zoned.datetime.time.second);
+}
+
+test "parse ISO offset Instant round-trip preserves moment" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    // 2024-06-15T14:30:00+09:00 is the same Instant as 2024-06-15T05:30:00Z.
+    const jst = try parseWithReference("2024-06-15T14:30:00+09:00", ref);
+    const utc = try parseWithReference("2024-06-15T05:30:00Z", ref);
+    try std.testing.expectEqual(
+        jst.zoned.toInstant().epoch_seconds,
+        utc.zoned.toInstant().epoch_seconds,
+    );
+}
+
+test "parse ISO with offset using DateTime reference still returns .zoned" {
+    const dt = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const result = try parseWithReference("2024-06-15T14:30:00+02:00", dt);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, 2 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO with offset using ZonedDateTime ref keeps the input's offset" {
+    const dt = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const ref_tz = try TimeZone.fromHours(-5);
+    const ref = ZonedDateTime.init(dt, ref_tz);
+    const result = try parseWithReference("2024-06-15T14:30:00+09:00", ref);
+    // Input's offset wins, not the reference's.
+    try std.testing.expectEqual(@as(i32, 9 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO without offset using ZonedDateTime ref wears the ref's zone" {
+    const dt = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const ref_tz = try TimeZone.fromHours(-5);
+    const ref = ZonedDateTime.init(dt, ref_tz);
+    const result = try parseWithReference("2024-06-15T14:30:00", ref);
+    try std.testing.expectEqual(@as(i32, -5 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO rejects malformed offset" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("2024-06-15T14:30:00+9:00", ref));
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("2024-06-15T14:30:00+25:00", ref));
 }
