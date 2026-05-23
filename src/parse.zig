@@ -1,12 +1,11 @@
 //! Natural language date parsing.
 
 const std = @import("std");
-const DateMod = @import("Date.zig");
-const Date = DateMod.Date;
-const DateError = DateMod.DateError;
-const today_fn = DateMod.today;
-const dateToEpochDays = DateMod.dateToEpochDays;
-const epochDaysToDate = DateMod.epochDaysToDate;
+const Date = @import("Date.zig");
+const DateError = Date.DateError;
+const today_fn = Date.today;
+const dateToEpochDays = Date.dateToEpochDays;
+const epochDaysToDate = Date.epochDaysToDate;
 
 const arithmetic = @import("arithmetic.zig");
 const ArithmeticError = arithmetic.ArithmeticError;
@@ -35,7 +34,7 @@ pub const Period = struct {
             .month => Date.initUnchecked(
                 self.start.year,
                 self.start.month,
-                DateMod.daysInMonth(self.start.year, self.start.month),
+                Date.daysInMonth(self.start.year, self.start.month),
             ),
             .year => Date.initUnchecked(self.start.year, 12, 31),
         };

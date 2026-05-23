@@ -1,12 +1,11 @@
 //! Date arithmetic operations.
 
 const std = @import("std");
-const DateMod = @import("Date.zig");
-const Date = DateMod.Date;
-const daysInMonth = DateMod.daysInMonth;
-const today = DateMod.today;
-const dateToEpochDays = DateMod.dateToEpochDays;
-const epochDaysToDate = DateMod.epochDaysToDate;
+const Date = @import("Date.zig");
+const daysInMonth = Date.daysInMonth;
+const today = Date.today;
+const dateToEpochDays = Date.dateToEpochDays;
+const epochDaysToDate = Date.epochDaysToDate;
 
 /// Add (or subtract) days from a date.
 pub fn addDays(date: Date, days: i32) Date {

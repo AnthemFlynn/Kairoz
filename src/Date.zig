@@ -1,7 +1,16 @@
-//! Date type and construction utilities.
+//! Naive calendar date (no time-of-day, no time zone).
+//!
+//! Follows the Zig stdlib "file is the type" convention:
+//! `const Date = @import("Date.zig");` returns the type directly.
 
 const std = @import("std");
 const builtin = @import("builtin");
+
+year: u16,
+month: u8,
+day: u8,
+
+const Date = @This();
 
 pub const DateError = error{
     InvalidDay,
@@ -9,25 +18,19 @@ pub const DateError = error{
     InvalidYear,
 };
 
-pub const Date = struct {
-    year: u16,
-    month: u8,
-    day: u8,
+/// Construct a validated Date. Returns error if values are out of range.
+pub fn init(year: u16, month: u8, day: u8) DateError!Date {
+    if (year == 0) return error.InvalidYear;
+    if (month < 1 or month > 12) return error.InvalidMonth;
+    const max_day = daysInMonth(year, month);
+    if (day < 1 or day > max_day) return error.InvalidDay;
+    return .{ .year = year, .month = month, .day = day };
+}
 
-    /// Construct a validated Date. Returns error if values are out of range.
-    pub fn init(year: u16, month: u8, day: u8) DateError!Date {
-        if (year == 0) return error.InvalidYear;
-        if (month < 1 or month > 12) return error.InvalidMonth;
-        const max_day = daysInMonth(year, month);
-        if (day < 1 or day > max_day) return error.InvalidDay;
-        return .{ .year = year, .month = month, .day = day };
-    }
-
-    /// Unchecked construction for internal use where values are known-valid.
-    pub fn initUnchecked(year: u16, month: u8, day: u8) Date {
-        return .{ .year = year, .month = month, .day = day };
-    }
-};
+/// Unchecked construction for internal use where values are known-valid.
+pub fn initUnchecked(year: u16, month: u8, day: u8) Date {
+    return .{ .year = year, .month = month, .day = day };
+}
 
 /// Check if year is a leap year.
 pub fn isLeapYear(year: u16) bool {

@@ -1,7 +1,7 @@
 //! Relative date formatting for display.
 
 const std = @import("std");
-const Date = @import("Date.zig").Date;
+const Date = @import("Date.zig");
 const daysBetween = @import("arithmetic.zig").daysBetween;
 
 /// Maximum buffer size needed for any formatted output.

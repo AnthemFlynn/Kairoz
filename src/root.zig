@@ -5,11 +5,18 @@
 /// Library version. Kept in sync with `build.zig.zon` manually.
 pub const version = "0.2.1";
 
-pub const Date = @import("Date.zig").Date;
-pub const DateError = @import("Date.zig").DateError;
-pub const today = @import("Date.zig").today;
-pub const isLeapYear = @import("Date.zig").isLeapYear;
-pub const daysInMonth = @import("Date.zig").daysInMonth;
+pub const Date = @import("Date.zig");
+pub const DateError = Date.DateError;
+pub const today = Date.today;
+pub const isLeapYear = Date.isLeapYear;
+pub const daysInMonth = Date.daysInMonth;
+
+pub const Time = @import("Time.zig");
+pub const TimeError = Time.TimeError;
+
+pub const DateTime = @import("DateTime.zig");
+
+pub const Duration = @import("Duration.zig");
 
 pub const ParsedDate = @import("parse.zig").ParsedDate;
 pub const ParseError = @import("parse.zig").ParseError;
@@ -35,6 +42,9 @@ pub const max_format_len = @import("format.zig").max_format_len;
 
 test {
     _ = @import("Date.zig");
+    _ = @import("Time.zig");
+    _ = @import("DateTime.zig");
+    _ = @import("Duration.zig");
     _ = @import("parse.zig");
     _ = @import("arithmetic.zig");
     _ = @import("format.zig");
