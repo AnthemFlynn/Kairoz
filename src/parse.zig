@@ -202,6 +202,20 @@ fn parseWithDateTimeRef(str: []const u8, reference: DateTime) ParseFullError!Par
     var lower_buf: [max_input_len]u8 = undefined;
     const lower = toLower(trimmed, &lower_buf);
 
+    // ISO 8601 datetime without offset, e.g. "2024-06-15T14:30:00".
+    // Offset-bearing forms are handled in parseWithZonedRef.
+    if (parseIsoDateTime(trimmed)) |dt| {
+        return .{ .datetime = dt };
+    } else |err| switch (err) {
+        error.NotIsoDateTime => {},
+        else => |e| return e,
+    }
+
+    // Compound: "<date> at <time>" or "<date> <time>".
+    if (try parseDateTimeCompound(lower, reference.date)) |dt| {
+        return .{ .datetime = dt };
+    }
+
     // Bare time-of-day → anchor onto reference date with the
     // today-if-future-else-tomorrow rule.
     if (parseTime(lower)) |time| {
@@ -222,6 +236,19 @@ fn parseWithZonedRef(str: []const u8, reference: ZonedDateTime) ParseFullError!P
     var lower_buf: [max_input_len]u8 = undefined;
     const lower = toLower(trimmed, &lower_buf);
 
+    // ISO 8601 datetime without offset → wear the reference's zone.
+    if (parseIsoDateTime(trimmed)) |dt| {
+        return .{ .zoned = ZonedDateTime.init(dt, reference.zone) };
+    } else |err| switch (err) {
+        error.NotIsoDateTime => {},
+        else => |e| return e,
+    }
+
+    // Compound: "<date> at <time>" or "<date> <time>".
+    if (try parseDateTimeCompound(lower, reference.datetime.date)) |dt| {
+        return .{ .zoned = ZonedDateTime.init(dt, reference.zone) };
+    }
+
     // Bare time-of-day → return a ZonedDateTime in the reference's zone.
     if (parseTime(lower)) |time| {
         const anchored = anchorTimeOnReference(time, reference.datetime);
@@ -229,6 +256,113 @@ fn parseWithZonedRef(str: []const u8, reference: ZonedDateTime) ParseFullError!P
     }
 
     return parseWithDateRef(str, reference.datetime.date);
+}
+
+/// Attempt to parse `lower` as `<date-expression> at <time>` or
+/// `<date-expression> <time>`. The date side reuses the existing
+/// date-only parsers; the time side reuses `parseTime`.
+fn parseDateTimeCompound(lower: []const u8, reference: Date) ParseFullError!?DateTime {
+    // Explicit "at" separator first — unambiguous.
+    if (std.mem.lastIndexOf(u8, lower, " at ")) |at_idx| {
+        const date_part = lower[0..at_idx];
+        const time_part = lower[at_idx + 4 ..];
+        if (parseTime(time_part)) |time| {
+            if (try parseDatePart(date_part, reference)) |date| {
+                return DateTime.init(date, time);
+            }
+        }
+    }
+
+    // Implicit space separator: iterate space positions right-to-left.
+    // The first split where the suffix parses as a time and the prefix
+    // parses as a date wins. This handles inputs like "tomorrow 9 am"
+    // where the trailing chunk ("am") isn't itself a valid time but
+    // "9 am" is.
+    var search_end: usize = lower.len;
+    while (std.mem.lastIndexOfScalar(u8, lower[0..search_end], ' ')) |sp| {
+        const time_part = lower[sp + 1 ..];
+        if (parseTime(time_part)) |time| {
+            const date_part = std.mem.trimEnd(u8, lower[0..sp], " ");
+            if (try parseDatePart(date_part, reference)) |date| {
+                return DateTime.init(date, time);
+            }
+        }
+        search_end = sp;
+    }
+
+    return null;
+}
+
+/// Parse `str` as a date-only expression. Returns null if the input
+/// parses to a non-date variant (period, range, etc.) — those can't
+/// compose with a time-of-day suffix.
+fn parseDatePart(str: []const u8, reference: Date) ParseFullError!?Date {
+    if (str.len == 0) return null;
+    const result = parseWithDateRef(str, reference) catch |err| switch (err) {
+        error.InvalidFormat, error.InvalidOffset => return null,
+        else => return err,
+    };
+    return switch (result) {
+        .date => |d| d,
+        else => null,
+    };
+}
+
+const IsoDateTimeError = error{NotIsoDateTime} || DateError || Time.TimeError;
+
+/// Parse ISO 8601 local datetime (no offset). Accepted shapes:
+///   YYYY-MM-DDTHH:MM
+///   YYYY-MM-DDTHH:MM:SS
+///   YYYY-MM-DDTHH:MM:SS.<fractional seconds, 1..9 digits>
+/// Also tolerates a space instead of `T` (RFC 3339 §5.6 NOTE).
+fn parseIsoDateTime(str: []const u8) IsoDateTimeError!DateTime {
+    if (str.len < 16) return error.NotIsoDateTime;
+    if (str[4] != '-' or str[7] != '-') return error.NotIsoDateTime;
+    if (str[10] != 'T' and str[10] != 't' and str[10] != ' ') return error.NotIsoDateTime;
+    if (str[13] != ':') return error.NotIsoDateTime;
+
+    // Date portion
+    const year = std.fmt.parseInt(u16, str[0..4], 10) catch return error.NotIsoDateTime;
+    const month = std.fmt.parseInt(u8, str[5..7], 10) catch return error.NotIsoDateTime;
+    const day = std.fmt.parseInt(u8, str[8..10], 10) catch return error.NotIsoDateTime;
+    const date = try Date.init(year, month, day);
+
+    // Time portion: parse hours and minutes (always present)
+    const hour = std.fmt.parseInt(u8, str[11..13], 10) catch return error.NotIsoDateTime;
+    const minute = std.fmt.parseInt(u8, str[14..16], 10) catch return error.NotIsoDateTime;
+
+    var second: u8 = 0;
+    var nanosecond: u32 = 0;
+    var idx: usize = 16;
+
+    if (idx < str.len and str[idx] == ':') {
+        if (idx + 3 > str.len) return error.NotIsoDateTime;
+        second = std.fmt.parseInt(u8, str[idx + 1 .. idx + 3], 10) catch return error.NotIsoDateTime;
+        idx += 3;
+
+        if (idx < str.len and str[idx] == '.') {
+            idx += 1;
+            const frac_start = idx;
+            while (idx < str.len and std.ascii.isDigit(str[idx])) : (idx += 1) {}
+            const frac_len = idx - frac_start;
+            if (frac_len == 0 or frac_len > 9) return error.NotIsoDateTime;
+            const frac_val = std.fmt.parseInt(u32, str[frac_start..idx], 10) catch
+                return error.NotIsoDateTime;
+            // Scale to nanoseconds. "5" → 5×10^8; "500" → 5×10^8; "500000000" → 5×10^8.
+            var scaled: u64 = frac_val;
+            const remaining: u32 = @intCast(9 - frac_len);
+            var i: u32 = 0;
+            while (i < remaining) : (i += 1) scaled *= 10;
+            nanosecond = @intCast(scaled);
+        }
+    }
+
+    // Anything left over means this isn't a bare ISO local datetime
+    // (likely an offset that the Zoned parser handles).
+    if (idx != str.len) return error.NotIsoDateTime;
+
+    const time = try Time.initFull(hour, minute, second, nanosecond);
+    return DateTime.init(date, time);
 }
 
 /// Anchor a bare time-of-day onto a DateTime reference.
@@ -1430,4 +1564,123 @@ test "parse with ZonedDateTime ref returns .zoned for time input" {
 test "parse with Date ref rejects time-bearing input" {
     const ref = Date.initUnchecked(2024, 6, 15);
     try std.testing.expectError(error.InvalidFormat, parseWithReference("9am", ref));
+}
+
+// ============ DATE+TIME COMPOUNDS (Phase F) ============
+
+test "parse 'tomorrow at 2pm'" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("tomorrow at 2pm", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+}
+
+test "parse 'tomorrow 2pm' without 'at'" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("tomorrow 2pm", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+}
+
+test "parse 'tomorrow 9 am' with internal space in time" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("tomorrow 9 am", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 9), result.datetime.time.hour);
+}
+
+test "parse 'next friday 14:30'" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 15), 10, 0, 0); // Monday
+    const result = try parseWithReference("next friday 14:30", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 26), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.datetime.time.minute);
+}
+
+test "parse 'next friday at 14:30'" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 15), 10, 0, 0);
+    const result = try parseWithReference("next friday at 14:30", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 26), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+}
+
+test "parse 'end of month at noon'" {
+    const ref = timeRef(Date.initUnchecked(2024, 2, 15), 10, 0, 0);
+    const result = try parseWithReference("end of month at noon", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 29), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 12), result.datetime.time.hour);
+}
+
+test "parse 'monday at 9am'" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 15), 10, 0, 0); // Monday
+    const result = try parseWithReference("monday at 9am", ref);
+    // 'monday' on Monday returns next Monday
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 22), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 9), result.datetime.time.hour);
+}
+
+test "parse ISO 8601 datetime YYYY-MM-DDTHH:MM" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const result = try parseWithReference("2024-06-15T14:30", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 15), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.datetime.time.minute);
+    try std.testing.expectEqual(@as(u8, 0), result.datetime.time.second);
+}
+
+test "parse ISO 8601 datetime YYYY-MM-DDTHH:MM:SS" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const result = try parseWithReference("2024-06-15T14:30:45", ref);
+    try std.testing.expectEqual(@as(u8, 45), result.datetime.time.second);
+}
+
+test "parse ISO 8601 datetime with fractional seconds (ms)" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const result = try parseWithReference("2024-06-15T14:30:45.500", ref);
+    try std.testing.expectEqual(@as(u32, 500_000_000), result.datetime.time.nanosecond);
+}
+
+test "parse ISO 8601 datetime with nanosecond fractional" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const result = try parseWithReference("2024-06-15T14:30:45.123456789", ref);
+    try std.testing.expectEqual(@as(u32, 123_456_789), result.datetime.time.nanosecond);
+}
+
+test "parse ISO 8601 datetime with space separator" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const result = try parseWithReference("2024-06-15 14:30", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 15), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+}
+
+test "parse ISO 8601 datetime with ZonedDateTime ref returns .zoned" {
+    const tz = try TimeZone.fromHours(-5);
+    const dt = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    const ref = ZonedDateTime.init(dt, tz);
+    const result = try parseWithReference("2024-06-15T14:30", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(i32, -5 * 3600), result.zoned.zone.offset_seconds);
+    try std.testing.expectEqual(@as(u8, 14), result.zoned.datetime.time.hour);
+}
+
+test "parse compound with ZonedDateTime ref returns .zoned" {
+    const tz = try TimeZone.fromHours(9);
+    const dt = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const ref = ZonedDateTime.init(dt, tz);
+    const result = try parseWithReference("tomorrow at 2pm", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.zoned.datetime.date);
+    try std.testing.expectEqual(@as(u8, 14), result.zoned.datetime.time.hour);
+    try std.testing.expectEqual(@as(i32, 9 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse ISO datetime rejects invalid date in shape" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    try std.testing.expectError(error.InvalidMonth, parseWithReference("2024-13-01T00:00", ref));
+}
+
+test "parse ISO datetime rejects malformed time" {
+    const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
+    // Hour 25 invalid
+    try std.testing.expectError(error.InvalidHour, parseWithReference("2024-06-15T25:00", ref));
 }
