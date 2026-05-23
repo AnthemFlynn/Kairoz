@@ -56,17 +56,17 @@ fn getEpochSeconds() i64 {
     if (builtin.os.tag == .windows) {
         // Windows: read system time from KUSER_SHARED_DATA
         // SystemTime is in 100-nanosecond intervals since 1601-01-01
-        const SharedUserData = std.os.windows.SharedUserData;
-        const sys_time = SharedUserData.SystemTime;
-        // Combine high and low parts (read High1Time first, verify with High2Time for consistency)
+        const sys_time = std.os.windows.SharedUserData.SystemTime;
         const hns: i64 = (@as(i64, sys_time.High1Time) << 32) | sys_time.LowPart;
-        // Convert to seconds and adjust from Windows epoch (1601) to Unix epoch (1970)
-        const windows_epoch_offset = std.time.epoch.windows; // -11644473600
-        return @divFloor(hns, 10_000_000) + windows_epoch_offset;
+        return @divFloor(hns, 10_000_000) + std.time.epoch.windows;
     } else {
-        // POSIX: use clock_gettime with REALTIME clock
-        const ts = std.posix.clock_gettime(.REALTIME) catch unreachable;
-        return ts.sec;
+        // POSIX: call clock_gettime via the raw system wrapper
+        // (std.posix removed the high-level clock_gettime helper in Zig 0.16.0).
+        var ts: std.posix.timespec = undefined;
+        switch (std.posix.errno(std.posix.system.clock_gettime(.REALTIME, &ts))) {
+            .SUCCESS => return ts.sec,
+            else => return 0, // Fall back to the Unix epoch on failure.
+        }
     }
 }
 

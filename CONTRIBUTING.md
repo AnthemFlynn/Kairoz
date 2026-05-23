@@ -4,7 +4,7 @@
 
 ### Requirements
 
-- Zig 0.16.0+ (nightly recommended)
+- Zig 0.16.0 (stable) or later
 - Git
 
 ### Getting Started
@@ -44,9 +44,8 @@ Kairoz/
 ## Commands
 
 ```bash
-zig build              # Build the library
+zig build              # Build the library module
 zig build test         # Run all tests
-zig build run          # Run CLI demo (if applicable)
 ```
 
 ## Testing

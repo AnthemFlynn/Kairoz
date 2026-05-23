@@ -16,7 +16,7 @@ Kairoz (from καιρός — "the opportune moment") is a natural language date
 
 **Current version: v0.2.1**
 
-**Minimum Zig version: 0.16.0** (cross-platform: POSIX + Windows)
+**Minimum Zig version: 0.16.0 stable** (cross-platform: POSIX + Windows)
 
 **Features:**
 - Relative dates: `today`, `tomorrow`, `yesterday` (aliases: `tdy`, `tom`, `yest`)
@@ -40,22 +40,23 @@ Kairoz (from καιρός — "the opportune moment") is a natural language date
 ## Build Commands
 
 ```bash
-zig build              # Build the project
-zig build run          # Run the CLI executable
-zig build test         # Run all tests (library + executable)
+zig build              # Build the library module
+zig build test         # Run all tests
 ```
+
+This is a library-only project — there is no CLI executable or `zig build run` step.
 
 ## Architecture
 
-The project exposes a Zig module for consumers and an optional CLI executable:
+The project ships a single Zig module for consumers:
 
-- **`src/root.zig`** — Library module exposed as "Kairoz" to package consumers. Contains the public API for date parsing and manipulation.
-- **`src/main.zig`** — CLI executable that imports and uses the Kairoz module. For demonstrating/testing the library.
+- **`src/root.zig`** — Public API surface, re-exporting from the modules below.
+- **`src/Date.zig`** — `Date` struct, validation, leap-year/days-in-month helpers, `today()`.
+- **`src/parse.zig`** — Natural-language parsing, `ParsedDate`, `Period`, `Granularity`.
+- **`src/arithmetic.zig`** — `addDays`/`addMonths`/`addYears`, week and month boundaries.
+- **`src/format.zig`** — `formatRelative` for human-readable output.
 
-The build system (`build.zig`) sets up:
-1. A public module "Kairoz" from `src/root.zig` for library consumers
-2. An executable that imports this module for CLI usage
-3. Separate test runners for both the module and executable
+The build system (`build.zig`) registers one module named `"Kairoz"` and wires up a single test step that runs every test in `src/root.zig` and its transitive imports.
 
 ## Consumer Integration
 
@@ -64,8 +65,8 @@ Downstream projects add Kairoz via:
 **build.zig.zon:**
 ```zig
 .dependencies = .{
-    .kairoz = .{
-        .url = "git+https://github.com/<username>/kairoz",
+    .Kairoz = .{
+        .url = "git+https://github.com/AnthemFlynn/Kairoz",
         .hash = "...",
     },
 },
@@ -73,7 +74,7 @@ Downstream projects add Kairoz via:
 
 **build.zig:**
 ```zig
-const kairoz_dep = b.dependency("kairoz", .{});
+const kairoz_dep = b.dependency("Kairoz", .{});
 exe.root_module.addImport("kairoz", kairoz_dep.module("Kairoz"));
 ```
 

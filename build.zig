@@ -4,8 +4,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Library module exposed to consumers
-    _ = b.addModule("kairoz", .{
+    // Library module exposed to consumers. The module key matches the
+    // package name in build.zig.zon so downstream `dep.module("Kairoz")`
+    // calls resolve as documented in README.md.
+    _ = b.addModule("Kairoz", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
