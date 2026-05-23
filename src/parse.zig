@@ -157,9 +157,13 @@ fn parseWithDateRef(str: []const u8, reference: Date) ParseFullError!ParsedTempo
         return parsed;
     }
 
-    // Natural offsets: "in 3 days", "2 weeks ago"
-    if (parseNaturalOffset(lower, reference)) |parsed| {
-        return parsed;
+    // Natural offsets: "in 3 days", "2 weeks ago", "in 5 min", "30 seconds ago".
+    // Sub-day units become `.duration` since `Date` can't anchor them.
+    if (parseRelativeDelta(lower, reference)) |delta| {
+        return switch (delta) {
+            .date => |d| .{ .date = d },
+            .duration => |dur| .{ .duration = dur },
+        };
     }
 
     // Relative keywords (with shorthands)
@@ -225,6 +229,17 @@ fn parseWithDateTimeRef(str: []const u8, reference: DateTime) ParseFullError!Par
         else => |e| return e,
     }
 
+    // Sub-day relative deltas anchor onto the reference DateTime;
+    // day+ deltas remain `.date` so the variant matches the input
+    // precision (caller has a reference but the input didn't specify
+    // a time-of-day).
+    if (parseRelativeDelta(lower, reference.date)) |delta| {
+        return switch (delta) {
+            .date => |d| .{ .date = d },
+            .duration => |dur| .{ .datetime = reference.addDuration(dur) },
+        };
+    }
+
     // Compound: "<date> at <time>" or "<date> <time>".
     if (try parseDateTimeCompound(lower, reference.date)) |dt| {
         return .{ .datetime = dt };
@@ -256,6 +271,14 @@ fn parseWithZonedRef(str: []const u8, reference: ZonedDateTime) ParseFullError!P
     } else |err| switch (err) {
         error.NotIsoDateTime => {},
         else => |e| return e,
+    }
+
+    // Sub-day relative deltas anchor onto the reference ZonedDateTime.
+    if (parseRelativeDelta(lower, reference.datetime.date)) |delta| {
+        return switch (delta) {
+            .date => |d| .{ .date = d },
+            .duration => |dur| .{ .zoned = reference.addDuration(dur) },
+        };
     }
 
     // Compound: "<date> at <time>" or "<date> <time>".
@@ -742,52 +765,77 @@ fn parsePeriodReference(str: []const u8, reference: Date) ?ParsedTemporal {
     return null;
 }
 
-/// Parse natural offset: "in 3 days", "2 weeks ago", etc.
-fn parseNaturalOffset(str: []const u8, reference: Date) ?ParsedTemporal {
-    // Try "in N <unit>" pattern
+/// A relative-delta parse result. Sub-day units produce a `Duration`
+/// (anchored by the caller into the appropriate variant); day+ units
+/// produce a fully-resolved `Date`.
+const RelativeDelta = union(enum) {
+    date: Date,
+    duration: Duration,
+};
+
+/// Parse natural relative-delta expressions: `"in N <unit>"` or
+/// `"N <unit> ago"`. Returns a `RelativeDelta` whose variant reflects
+/// the unit's resolution — sub-day for the new sec/min/hour units,
+/// date-shaped for day/week/month/year.
+fn parseRelativeDelta(str: []const u8, reference: Date) ?RelativeDelta {
+    var sign: i32 = 0;
+    var rest: []const u8 = undefined;
     if (std.mem.startsWith(u8, str, "in ")) {
-        const rest = str[3..];
-        if (parseNaturalOffsetValue(rest, 1, reference)) |date| {
-            return .{ .date = date };
-        }
+        sign = 1;
+        rest = str[3..];
+    } else if (std.mem.endsWith(u8, str, " ago")) {
+        sign = -1;
+        rest = str[0 .. str.len - 4];
+    } else {
+        return null;
     }
 
-    // Try "N <unit> ago" pattern
-    if (std.mem.endsWith(u8, str, " ago")) {
-        const rest = str[0 .. str.len - 4];
-        if (parseNaturalOffsetValue(rest, -1, reference)) |date| {
-            return .{ .date = date };
-        }
-    }
-
-    return null;
-}
-
-/// Parse "N <unit>" and apply with given sign multiplier
-fn parseNaturalOffsetValue(str: []const u8, sign: i32, reference: Date) ?Date {
-    // Find the space separating number and unit
-    const space_idx = std.mem.indexOf(u8, str, " ") orelse return null;
-
-    const num_str = str[0..space_idx];
-    const unit_str = str[space_idx + 1 ..];
+    const space_idx = std.mem.indexOf(u8, rest, " ") orelse return null;
+    const num_str = rest[0..space_idx];
+    const unit_str = rest[space_idx + 1 ..];
 
     const value = std.fmt.parseInt(u32, num_str, 10) catch return null;
     if (value == 0) return null;
+    const signed_value: i64 = @as(i64, value) * @as(i64, sign);
 
-    const signed_value: i32 = @as(i32, @intCast(value)) * sign;
+    // Sub-day units → Duration. The caller decides how to anchor.
+    if (std.mem.eql(u8, unit_str, "sec") or
+        std.mem.eql(u8, unit_str, "secs") or
+        std.mem.eql(u8, unit_str, "second") or
+        std.mem.eql(u8, unit_str, "seconds"))
+    {
+        return .{ .duration = Duration.fromSeconds(signed_value) };
+    }
+    if (std.mem.eql(u8, unit_str, "min") or
+        std.mem.eql(u8, unit_str, "mins") or
+        std.mem.eql(u8, unit_str, "minute") or
+        std.mem.eql(u8, unit_str, "minutes"))
+    {
+        return .{ .duration = Duration.fromMinutes(signed_value) };
+    }
+    if (std.mem.eql(u8, unit_str, "hr") or
+        std.mem.eql(u8, unit_str, "hrs") or
+        std.mem.eql(u8, unit_str, "hour") or
+        std.mem.eql(u8, unit_str, "hours"))
+    {
+        return .{ .duration = Duration.fromHours(signed_value) };
+    }
 
-    // Match unit (singular or plural)
+    // Day+ units → Date.
+    const i32_signed: i32 = std.math.cast(i32, signed_value) orelse return null;
     if (std.mem.eql(u8, unit_str, "day") or std.mem.eql(u8, unit_str, "days")) {
-        return addDaysInternal(reference, signed_value);
+        return .{ .date = addDaysInternal(reference, i32_signed) };
     }
     if (std.mem.eql(u8, unit_str, "week") or std.mem.eql(u8, unit_str, "weeks")) {
-        return addDaysInternal(reference, signed_value * 7);
+        return .{ .date = addDaysInternal(reference, i32_signed * 7) };
     }
     if (std.mem.eql(u8, unit_str, "month") or std.mem.eql(u8, unit_str, "months")) {
-        return arithmetic.addMonths(reference, signed_value) catch return null;
+        const d = arithmetic.addMonths(reference, i32_signed) catch return null;
+        return .{ .date = d };
     }
     if (std.mem.eql(u8, unit_str, "year") or std.mem.eql(u8, unit_str, "years")) {
-        return arithmetic.addYears(reference, signed_value) catch return null;
+        const d = arithmetic.addYears(reference, i32_signed) catch return null;
+        return .{ .date = d };
     }
 
     return null;
@@ -1975,4 +2023,95 @@ test "parse 'next week' still returns Period (not range)" {
     const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
     const result = try parseWithReference("next week", ref);
     try std.testing.expect(result == .period);
+}
+
+// ============ RELATIVE DURATIONS — sub-day (Phase G) ============
+
+test "parse 'in 5 min' with Date ref returns .duration" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 5 min", ref);
+    try std.testing.expect(result == .duration);
+    try std.testing.expectEqual(@as(i64, 300), result.duration.seconds);
+}
+
+test "parse 'in 30 sec' with Date ref returns .duration" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 30 sec", ref);
+    try std.testing.expect(result == .duration);
+    try std.testing.expectEqual(@as(i64, 30), result.duration.seconds);
+}
+
+test "parse 'in 2 hours' with Date ref returns .duration" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 2 hours", ref);
+    try std.testing.expect(result == .duration);
+    try std.testing.expectEqual(@as(i64, 7_200), result.duration.seconds);
+}
+
+test "parse '5 minutes ago' negative duration" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("5 minutes ago", ref);
+    try std.testing.expect(result == .duration);
+    try std.testing.expectEqual(@as(i64, -300), result.duration.seconds);
+}
+
+test "parse 'in 5 min' with DateTime ref anchors to datetime" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("in 5 min", ref);
+    try std.testing.expect(result == .datetime);
+    try std.testing.expectEqual(@as(u8, 10), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 5), result.datetime.time.minute);
+}
+
+test "parse 'in 2 hours' with DateTime ref crosses midnight" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 23, 30, 0);
+    const result = try parseWithReference("in 2 hours", ref);
+    try std.testing.expect(result == .datetime);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 1), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.datetime.time.minute);
+}
+
+test "parse 'in 5 min' with ZonedDateTime ref returns .zoned" {
+    const tz = try TimeZone.fromHours(9);
+    const dt = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const ref = ZonedDateTime.init(dt, tz);
+    const result = try parseWithReference("in 5 min", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(u8, 10), result.zoned.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 5), result.zoned.datetime.time.minute);
+    try std.testing.expectEqual(@as(i32, 9 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse 'in 3 days' with DateTime ref still returns .date" {
+    // Day+ deltas don't carry time-of-day info; variant matches input
+    // precision per the project rule.
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("in 3 days", ref);
+    try std.testing.expect(result == .date);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 18), result.date);
+}
+
+test "parse 'in 1 hour' singular unit" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 1 hour", ref);
+    try std.testing.expectEqual(@as(i64, 3_600), result.duration.seconds);
+}
+
+test "parse 'in 30 seconds' plural" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 30 seconds", ref);
+    try std.testing.expectEqual(@as(i64, 30), result.duration.seconds);
+}
+
+test "parse 'in 5 mins' short plural" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 5 mins", ref);
+    try std.testing.expectEqual(@as(i64, 300), result.duration.seconds);
+}
+
+test "parse 'in 2 hrs' short plural" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    const result = try parseWithReference("in 2 hrs", ref);
+    try std.testing.expectEqual(@as(i64, 7_200), result.duration.seconds);
 }

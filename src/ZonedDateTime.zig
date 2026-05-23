@@ -71,6 +71,18 @@ pub fn equalsExact(self: ZonedDateTime, other: ZonedDateTime) bool {
     return std.meta.eql(self, other);
 }
 
+/// Add a `Duration` to this zoned moment. Internally converts to
+/// `Instant`, adds, and projects back into the same zone. The zone
+/// is preserved verbatim.
+pub fn addDuration(self: ZonedDateTime, dur: Duration) ZonedDateTime {
+    return fromInstant(self.toInstant().addDuration(dur), self.zone);
+}
+
+/// Subtract a `Duration`. Equivalent to `addDuration(dur.negate())`.
+pub fn subDuration(self: ZonedDateTime, dur: Duration) ZonedDateTime {
+    return self.addDuration(dur.negate());
+}
+
 // ============ TESTS ============
 
 test "ZonedDateTime.init" {
