@@ -68,8 +68,23 @@ pub const ParsedTemporal = union(enum) {
     clear,
 };
 
-/// Parse date string using current system date as reference.
-pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!ParsedTemporal {
+/// Union of every error a parse call can return.
+/// Stable across reference types — extending the parser to handle new
+/// inputs widens the variants the result `union` can hold, not the
+/// errors the function can return.
+pub const ParseFullError =
+    ParseError ||
+    DateError ||
+    ArithmeticError ||
+    Time.TimeError ||
+    DateRange.DateRangeError ||
+    TimeZone.TimeZoneError;
+
+/// Parse a temporal expression with the system clock as reference.
+/// Time-bearing inputs (e.g. `"9am"`, `"tomorrow at 2pm"`) error here
+/// because no time-of-day reference is available; use
+/// `parseWithReference(input, DateTime|ZonedDateTime)` for those.
+pub fn parse(str: []const u8) ParseFullError!ParsedTemporal {
     return parseWithReference(str, today_fn());
 }
 
@@ -82,14 +97,36 @@ pub fn parse(str: []const u8) (ParseError || DateError || ArithmeticError)!Parse
 /// keyword prefix.
 pub const max_input_len: usize = 64;
 
-/// Parse date string with explicit reference date (for testing).
-pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateError || ArithmeticError)!ParsedTemporal {
+/// Parse a temporal expression with an explicit reference.
+///
+/// `reference` may be one of:
+/// - `Date` — date-only inputs only; time-bearing inputs error.
+/// - `DateTime` — date-only inputs return `.date`; time-bearing inputs
+///   return `.datetime` (anchored to `reference.date` per the
+///   today-if-future-else-tomorrow rule for bare times).
+/// - `ZonedDateTime` — same as `DateTime` but time-bearing results
+///   carry the reference's `TimeZone` as `.zoned`.
+///
+/// The return variant always reflects the richest type the input
+/// justified, regardless of how rich the reference is.
+pub fn parseWithReference(str: []const u8, reference: anytype) ParseFullError!ParsedTemporal {
+    const T = @TypeOf(reference);
+    return switch (T) {
+        Date => parseWithDateRef(str, reference),
+        DateTime => parseWithDateTimeRef(str, reference),
+        ZonedDateTime => parseWithZonedRef(str, reference),
+        else => @compileError(
+            "parseWithReference: reference must be Date, DateTime, or ZonedDateTime; got " ++
+                @typeName(T),
+        ),
+    };
+}
+
+fn parseWithDateRef(str: []const u8, reference: Date) ParseFullError!ParsedTemporal {
     const trimmed = std.mem.trim(u8, str, " \t\n\r");
     if (trimmed.len == 0) return error.InvalidFormat;
     if (trimmed.len > max_input_len) return error.InvalidFormat;
 
-    // Normalize to lowercase. trimmed.len <= max_input_len is guaranteed above,
-    // so the buffer is always large enough to hold the full input.
     var lower_buf: [max_input_len]u8 = undefined;
     const lower = toLower(trimmed, &lower_buf);
 
@@ -157,6 +194,53 @@ pub fn parseWithReference(str: []const u8, reference: Date) (ParseError || DateE
     return parseAbsoluteDate(trimmed, reference);
 }
 
+fn parseWithDateTimeRef(str: []const u8, reference: DateTime) ParseFullError!ParsedTemporal {
+    const trimmed = std.mem.trim(u8, str, " \t\n\r");
+    if (trimmed.len == 0) return error.InvalidFormat;
+    if (trimmed.len > max_input_len) return error.InvalidFormat;
+
+    var lower_buf: [max_input_len]u8 = undefined;
+    const lower = toLower(trimmed, &lower_buf);
+
+    // Bare time-of-day → anchor onto reference date with the
+    // today-if-future-else-tomorrow rule.
+    if (parseTime(lower)) |time| {
+        return .{ .datetime = anchorTimeOnReference(time, reference) };
+    }
+
+    // Otherwise fall through to date-only parsing against reference.date.
+    // Date-only inputs return their natural variant (`.date`, `.period`,
+    // `.clear`); they are NOT silently lifted to `.datetime`.
+    return parseWithDateRef(str, reference.date);
+}
+
+fn parseWithZonedRef(str: []const u8, reference: ZonedDateTime) ParseFullError!ParsedTemporal {
+    const trimmed = std.mem.trim(u8, str, " \t\n\r");
+    if (trimmed.len == 0) return error.InvalidFormat;
+    if (trimmed.len > max_input_len) return error.InvalidFormat;
+
+    var lower_buf: [max_input_len]u8 = undefined;
+    const lower = toLower(trimmed, &lower_buf);
+
+    // Bare time-of-day → return a ZonedDateTime in the reference's zone.
+    if (parseTime(lower)) |time| {
+        const anchored = anchorTimeOnReference(time, reference.datetime);
+        return .{ .zoned = ZonedDateTime.init(anchored, reference.zone) };
+    }
+
+    return parseWithDateRef(str, reference.datetime.date);
+}
+
+/// Anchor a bare time-of-day onto a DateTime reference.
+/// If the parsed time is at or after the reference's wall-clock time,
+/// it lands on the reference date; otherwise it lands on the next day.
+fn anchorTimeOnReference(time: Time, reference: DateTime) DateTime {
+    if (time.totalNanoseconds() >= reference.time.totalNanoseconds()) {
+        return DateTime.init(reference.date, time);
+    }
+    return DateTime.init(addDaysInternal(reference.date, 1), time);
+}
+
 fn toLower(str: []const u8, buf: []u8) []const u8 {
     std.debug.assert(str.len <= buf.len);
     for (str, 0..) |c, i| {
@@ -216,6 +300,81 @@ fn parseAbsoluteDate(str: []const u8, reference: Date) (ParseError || DateError)
     }
 
     return error.InvalidFormat;
+}
+
+/// Parse a bare time-of-day token. Returns null on no match (not an error;
+/// callers fall back to other parsers).
+///
+/// Accepted forms (case folded by caller):
+/// - Word forms: `noon` (12:00), `midnight` (00:00)
+/// - 12-hour: `9am`, `9 am`, `9:30pm`, `9:30:45 am`
+/// - 24-hour: `14:30`, `09:00`, `00:00`, `23:59:59`
+///
+/// 12-hour rules:
+/// - `12am` → 00:00, `12pm` → 12:00 (standard English convention)
+/// - Hours must be 1..12; minutes/seconds must be 0..59
+fn parseTime(str: []const u8) ?Time {
+    // Word forms
+    if (std.mem.eql(u8, str, "noon")) return Time.noon;
+    if (std.mem.eql(u8, str, "midnight")) return Time.midnight;
+
+    // Detect am/pm suffix (case already lowered by caller)
+    var s = str;
+    var is_12h = false;
+    var pm = false;
+    if (std.mem.endsWith(u8, s, "am")) {
+        is_12h = true;
+        s = std.mem.trimEnd(u8, s[0 .. s.len - 2], " ");
+    } else if (std.mem.endsWith(u8, s, "pm")) {
+        is_12h = true;
+        pm = true;
+        s = std.mem.trimEnd(u8, s[0 .. s.len - 2], " ");
+    }
+
+    if (s.len == 0) return null;
+    // A bare numeric `s` like "9" would otherwise parse as an hour with
+    // no separator — that's already handled by parseAbsoluteDate as a
+    // bare day-of-month. We only accept hour-only inputs when an am/pm
+    // suffix was present.
+    if (!is_12h and std.mem.indexOfScalar(u8, s, ':') == null) return null;
+
+    var hour: u32 = 0;
+    var minute: u32 = 0;
+    var second: u32 = 0;
+
+    var parts = std.mem.splitScalar(u8, s, ':');
+    const h_str = parts.next() orelse return null;
+    if (h_str.len == 0 or h_str.len > 2) return null;
+    hour = std.fmt.parseInt(u32, h_str, 10) catch return null;
+
+    if (parts.next()) |m_str| {
+        if (m_str.len == 0 or m_str.len > 2) return null;
+        minute = std.fmt.parseInt(u32, m_str, 10) catch return null;
+    }
+    if (parts.next()) |sec_str| {
+        if (sec_str.len == 0 or sec_str.len > 2) return null;
+        second = std.fmt.parseInt(u32, sec_str, 10) catch return null;
+    }
+    if (parts.next() != null) return null; // too many colons
+
+    if (is_12h) {
+        if (hour < 1 or hour > 12) return null;
+        if (pm) {
+            if (hour != 12) hour += 12;
+        } else {
+            if (hour == 12) hour = 0;
+        }
+    } else {
+        if (hour > 23) return null;
+    }
+    if (minute > 59 or second > 59) return null;
+
+    return Time.initUnchecked(
+        @intCast(hour),
+        @intCast(minute),
+        @intCast(second),
+        0,
+    );
 }
 
 /// Parse weekday name, returns 0-6 (Mon-Sun) or null.
@@ -1145,4 +1304,130 @@ test "parse rejects overlong input instead of truncating" {
     @memset(&long, 'x');
     @memcpy(long[0..5], "today");
     try std.testing.expectError(error.InvalidFormat, parseWithReference(&long, ref));
+}
+
+// ============ TIME-OF-DAY PARSING (Phase E) ============
+
+fn timeRef(date: Date, h: u8, m: u8, s: u8) DateTime {
+    return DateTime.init(date, Time.initUnchecked(h, m, s, 0));
+}
+
+test "parse '9am' with DateTime ref before 9am lands on same date" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 7, 0, 0);
+    const result = try parseWithReference("9am", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 15), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 9), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 0), result.datetime.time.minute);
+}
+
+test "parse '9am' after 9am rolls to next day" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("9am", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 9), result.datetime.time.hour);
+}
+
+test "parse '9am' at exactly 9am stays on same date" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 9, 0, 0);
+    const result = try parseWithReference("9am", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 15), result.datetime.date);
+}
+
+test "parse '2:30pm' with minutes" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("2:30pm", ref);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.datetime.time.minute);
+}
+
+test "parse '2:30 pm' with space before am/pm" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("2:30 pm", ref);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.datetime.time.minute);
+}
+
+test "parse '12am' is midnight" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 11, 0, 0);
+    const result = try parseWithReference("12am", ref);
+    // 11am > 0am, so rolls to next day
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 0), result.datetime.time.hour);
+}
+
+test "parse '12pm' is noon" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("12pm", ref);
+    try std.testing.expectEqual(@as(u8, 12), result.datetime.time.hour);
+}
+
+test "parse '14:30' 24-hour" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("14:30", ref);
+    try std.testing.expectEqual(@as(u8, 14), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 30), result.datetime.time.minute);
+}
+
+test "parse '00:00' 24-hour midnight" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 12, 0, 0);
+    const result = try parseWithReference("00:00", ref);
+    // Past noon, rolls to next day's midnight
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+    try std.testing.expectEqual(@as(u8, 0), result.datetime.time.hour);
+}
+
+test "parse '23:59:59' 24-hour with seconds" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("23:59:59", ref);
+    try std.testing.expectEqual(@as(u8, 23), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 59), result.datetime.time.minute);
+    try std.testing.expectEqual(@as(u8, 59), result.datetime.time.second);
+}
+
+test "parse 'noon' word form" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("noon", ref);
+    try std.testing.expectEqual(@as(u8, 12), result.datetime.time.hour);
+    try std.testing.expectEqual(@as(u8, 0), result.datetime.time.minute);
+}
+
+test "parse 'midnight' word form" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 1, 0, 0);
+    const result = try parseWithReference("midnight", ref);
+    // Reference is 01:00, so 00:00 is past → next day
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.datetime.date);
+}
+
+test "parse rejects '25:00' invalid 24-hour" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    // Invalid time falls through to date parsers which also reject → InvalidFormat
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("25:00", ref));
+}
+
+test "parse rejects '13pm' invalid 12-hour" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("13pm", ref));
+}
+
+test "parse date-only input with DateTime ref returns .date not .datetime" {
+    const ref = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const result = try parseWithReference("tomorrow", ref);
+    // Should be .date variant — date inputs are NOT lifted to .datetime
+    try std.testing.expect(result == .date);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 16), result.date);
+}
+
+test "parse with ZonedDateTime ref returns .zoned for time input" {
+    const tz = try TimeZone.fromHours(-5);
+    const dt = timeRef(Date.initUnchecked(2024, 6, 15), 10, 0, 0);
+    const ref = ZonedDateTime.init(dt, tz);
+    const result = try parseWithReference("2:30pm", ref);
+    try std.testing.expect(result == .zoned);
+    try std.testing.expectEqual(@as(u8, 14), result.zoned.datetime.time.hour);
+    try std.testing.expectEqual(@as(i32, -5 * 3600), result.zoned.zone.offset_seconds);
+}
+
+test "parse with Date ref rejects time-bearing input" {
+    const ref = Date.initUnchecked(2024, 6, 15);
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("9am", ref));
 }
