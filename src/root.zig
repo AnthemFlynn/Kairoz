@@ -18,6 +18,13 @@ pub const DateTime = @import("DateTime.zig");
 
 pub const Duration = @import("Duration.zig");
 
+pub const Instant = @import("Instant.zig");
+
+pub const TimeZone = @import("TimeZone.zig");
+pub const TimeZoneError = TimeZone.TimeZoneError;
+
+pub const ZonedDateTime = @import("ZonedDateTime.zig");
+
 pub const ParsedDate = @import("parse.zig").ParsedDate;
 pub const ParseError = @import("parse.zig").ParseError;
 pub const Granularity = @import("parse.zig").Granularity;
@@ -45,6 +52,9 @@ test {
     _ = @import("Time.zig");
     _ = @import("DateTime.zig");
     _ = @import("Duration.zig");
+    _ = @import("Instant.zig");
+    _ = @import("TimeZone.zig");
+    _ = @import("ZonedDateTime.zig");
     _ = @import("parse.zig");
     _ = @import("arithmetic.zig");
     _ = @import("format.zig");

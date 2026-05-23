@@ -4,7 +4,6 @@
 //! `const Date = @import("Date.zig");` returns the type directly.
 
 const std = @import("std");
-const builtin = @import("builtin");
 
 year: u16,
 month: u8,
@@ -46,31 +45,15 @@ pub fn daysInMonth(year: u16, month: u8) u8 {
     return days[month - 1];
 }
 
-/// Returns current date from system clock.
-/// Cross-platform: uses clock_gettime on POSIX, KUSER_SHARED_DATA on Windows.
+/// Returns the current UTC calendar date from the system clock.
+///
+/// Delegates to `Instant.now()`. Note this is the UTC date — at midnight
+/// UTC observers in different time zones see different dates. Callers
+/// that care about local-zone dates should construct a `ZonedDateTime`
+/// from `Instant.now()` instead.
 pub fn today() Date {
-    const epoch_secs = getEpochSeconds();
-    const epoch_day = @divFloor(epoch_secs, 86400);
-    return epochDaysToDate(@intCast(epoch_day));
-}
-
-/// Get current Unix epoch seconds (cross-platform).
-fn getEpochSeconds() i64 {
-    if (builtin.os.tag == .windows) {
-        // Windows: read system time from KUSER_SHARED_DATA
-        // SystemTime is in 100-nanosecond intervals since 1601-01-01
-        const sys_time = std.os.windows.SharedUserData.SystemTime;
-        const hns: i64 = (@as(i64, sys_time.High1Time) << 32) | sys_time.LowPart;
-        return @divFloor(hns, 10_000_000) + std.time.epoch.windows;
-    } else {
-        // POSIX: call clock_gettime via the raw system wrapper
-        // (std.posix removed the high-level clock_gettime helper in Zig 0.16.0).
-        var ts: std.posix.timespec = undefined;
-        switch (std.posix.errno(std.posix.system.clock_gettime(.REALTIME, &ts))) {
-            .SUCCESS => return ts.sec,
-            else => return 0, // Fall back to the Unix epoch on failure.
-        }
-    }
+    const Instant = @import("Instant.zig");
+    return Instant.now().toUtcDate();
 }
 
 /// Convert Date to epoch day (days since 1970-01-01).
