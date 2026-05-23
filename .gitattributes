@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+*.zig    text eol=lf
+*.zon    text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+
+# Exclude development noise from `git archive` source tarballs so
+# `zig fetch --save` hashes a minimal package.
+docs/    export-ignore
+.github/ export-ignore
+CHANGELOG.md     export-ignore
+CONTRIBUTING.md  export-ignore
+CLAUDE.md        export-ignore

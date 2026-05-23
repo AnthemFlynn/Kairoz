@@ -14,23 +14,37 @@ Use the `/zig` skill for Zig development tasks. Additional Zig skills available:
 
 Kairoz (from καιρός — "the opportune moment") is a natural language date parsing library for Zig. Zero dependencies, stdlib only.
 
-**Current version: v0.2.1**
+**Current version: v0.3.0**
 
 **Minimum Zig version: 0.16.0 stable** (cross-platform: POSIX + Windows)
 
-**Features:**
+**Type hierarchy** (Layer 1 naive → Layer 2 aware → Layer 3 absolute):
+- Naive: `Date`, `Time`, `DateTime`, `Period`, `DateRange`, `Duration`
+- Aware: `TimeZone` (offset-only in v0.3), `ZonedDateTime`
+- Absolute: `Instant`
+
+**Parser features:**
 - Relative dates: `today`, `tomorrow`, `yesterday` (aliases: `tdy`, `tom`, `yest`)
 - Weekday names: `monday`, `mon`, `next monday`, `last friday`
-- Forward/backward offsets: `+3d`, `-2w`, `+1m`, `-1y` (or unitless: `+3`, `-2`)
-- Natural offsets: `in 3 days`, `2 weeks ago`
-- Period references: `next week`, `this month`, `last year` (return `Period`)
-- Boundary expressions: `end of month`, `beginning of week`
-- Month names: `february`, `dec` (return `Period`)
+- Offsets: `+3d`, `-2w`, `+1m`, `-1y`, unitless `+3`/`-2`
+- Natural offsets (day+): `in 3 days`, `2 weeks ago`
+- Natural offsets (sub-day): `in 5 min`, `in 30 sec`, `in 2 hours`, `5 minutes ago`
+- Period references: `next week`, `this month`, `last year`
+- Boundary expressions: `end of month`, `beginning of next week`
+- Month names + day: `jul 4`, `4 jul`, `dec 23rd`
 - Ordinal days: `1st`, `23rd`
+- Bare years: `2024`
+- Date ranges: `jan 15 to feb 1`, `between today and friday`, `next 7 days`, `..` interval shorthand
+- Times: `9am`, `9:30 pm`, `14:30`, `23:59:59`, `noon`, `midnight`
+- Date+time compounds: `tomorrow at 2pm`, `next friday 14:30`, `end of month at noon`
+- ISO 8601 naive: `2024-06-15T14:30:00`, fractional seconds, space separator
+- ISO 8601 zoned: `Z`, `+09:00`, `-05:00`, `+05:30`, `+0900` compact
 - Clear values: `none`, `clear`
-- Absolute formats: `YYYY-MM-DD`, `MM-DD`, `DD`, `2024` (bare year)
-- Date arithmetic: add days/months/years, week/month boundaries
-- Relative formatting for display
+
+**Output:**
+- `formatRelative` — natural language
+- `formatDate` / `formatTime` / `formatDateTime` / `formatZoned` — Moment-style tokens
+- `formatIso(value, buf)` — comptime-dispatched ISO 8601 across all temporal types
 
 **Key concept:** `ParsedTemporal` is a tagged union over every possible parse result:
 - `.date` — specific calendar date (e.g., "tomorrow")
