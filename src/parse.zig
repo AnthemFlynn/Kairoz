@@ -135,6 +135,13 @@ fn parseWithDateRef(str: []const u8, reference: Date) ParseFullError!ParsedTempo
         return .clear;
     }
 
+    // Explicit date ranges: "jan 15 to feb 1", "2024-06-01..2024-06-30",
+    // "between today and friday", "from monday to friday",
+    // "next 3 days", "last 7 days".
+    if (try parseDateRange(trimmed, lower, reference)) |range| {
+        return .{ .range = range };
+    }
+
     // Boundary expressions (most specific multi-word)
     if (parseBoundaryExpression(lower, reference)) |date| {
         return .{ .date = date };
@@ -174,6 +181,13 @@ fn parseWithDateRef(str: []const u8, reference: Date) ParseFullError!ParsedTempo
     // Month names as periods
     if (parseMonthName(lower, reference)) |parsed| {
         return parsed;
+    }
+
+    // Month + day combinations: "feb 29", "jan 15", "15 feb", "23rd dec".
+    // Same heuristic as month-name-only: if the month is in the past
+    // (or current with the day past), the year rolls forward.
+    if (parseMonthDay(lower, reference)) |date| {
+        return .{ .date = date };
     }
 
     // Ordinal days: "1st", "23rd"
@@ -291,6 +305,100 @@ fn parseDateTimeCompound(lower: []const u8, reference: Date) ParseFullError!?Dat
     }
 
     return null;
+}
+
+/// Attempt to parse `lower` as a `DateRange`. Accepted shapes:
+///   - "<date> to <date>"
+///   - "from <date> to <date>"
+///   - "between <date> and <date>"
+///   - "<date>..<date>" (ISO interval shorthand)
+///   - "next N <day|days|week|weeks>"
+///   - "last N <day|days|week|weeks>"
+///
+/// `trimmed` is the original-case input (needed when an endpoint is an
+/// ISO date like `2024-06-01`); `lower` is the case-folded copy.
+fn parseDateRange(trimmed: []const u8, lower: []const u8, reference: Date) ParseFullError!?DateRange {
+    _ = trimmed; // reserved for case-sensitive endpoint parsing if needed
+
+    // ISO-style ".." separator (no spaces required).
+    if (std.mem.indexOf(u8, lower, "..")) |dots_idx| {
+        const a = std.mem.trim(u8, lower[0..dots_idx], " ");
+        const b = std.mem.trim(u8, lower[dots_idx + 2 ..], " ");
+        if (try rangeFromEndpoints(a, b, reference)) |r| return r;
+    }
+
+    // "between X and Y"
+    if (std.mem.startsWith(u8, lower, "between ")) {
+        const rest = lower[8..];
+        if (std.mem.indexOf(u8, rest, " and ")) |and_idx| {
+            const a = std.mem.trim(u8, rest[0..and_idx], " ");
+            const b = std.mem.trim(u8, rest[and_idx + 5 ..], " ");
+            if (try rangeFromEndpoints(a, b, reference)) |r| return r;
+        }
+    }
+
+    // "from X to Y" or "X to Y"
+    {
+        const stripped: []const u8 = if (std.mem.startsWith(u8, lower, "from "))
+            lower[5..]
+        else
+            lower;
+        if (std.mem.indexOf(u8, stripped, " to ")) |to_idx| {
+            const a = std.mem.trim(u8, stripped[0..to_idx], " ");
+            const b = std.mem.trim(u8, stripped[to_idx + 4 ..], " ");
+            if (try rangeFromEndpoints(a, b, reference)) |r| return r;
+        }
+    }
+
+    // "next N <unit>" / "last N <unit>"
+    if (parseRelativeRange(lower, reference)) |r| return r;
+
+    return null;
+}
+
+fn rangeFromEndpoints(a: []const u8, b: []const u8, reference: Date) ParseFullError!?DateRange {
+    const start_d = (try parseDatePart(a, reference)) orelse return null;
+    const end_d = (try parseDatePart(b, reference)) orelse return null;
+    return DateRange.init(start_d, end_d) catch |err| switch (err) {
+        error.EndBeforeStart => return err,
+    };
+}
+
+fn parseRelativeRange(lower: []const u8, reference: Date) ?DateRange {
+    const Direction = enum { next, last };
+    var direction: Direction = undefined;
+    var rest: []const u8 = undefined;
+
+    if (std.mem.startsWith(u8, lower, "next ")) {
+        direction = .next;
+        rest = lower[5..];
+    } else if (std.mem.startsWith(u8, lower, "last ")) {
+        direction = .last;
+        rest = lower[5..];
+    } else {
+        return null;
+    }
+
+    const space_idx = std.mem.indexOfScalar(u8, rest, ' ') orelse return null;
+    const num_str = rest[0..space_idx];
+    const unit_str = rest[space_idx + 1 ..];
+
+    const n = std.fmt.parseInt(u32, num_str, 10) catch return null;
+    if (n == 0) return null;
+
+    const unit_days: i32 = if (std.mem.eql(u8, unit_str, "day") or std.mem.eql(u8, unit_str, "days"))
+        @intCast(n)
+    else if (std.mem.eql(u8, unit_str, "week") or std.mem.eql(u8, unit_str, "weeks"))
+        @intCast(n * 7)
+    else
+        return null;
+
+    // N days inclusive: today plus (N-1) more days, or N-1 days back to today.
+    const span = unit_days - 1;
+    return switch (direction) {
+        .next => DateRange.initUnchecked(reference, addDaysInternal(reference, span)),
+        .last => DateRange.initUnchecked(addDaysInternal(reference, -span), reference),
+    };
 }
 
 /// Parse `str` as a date-only expression. Returns null if the input
@@ -760,35 +868,93 @@ fn parseBoundaryExpression(str: []const u8, reference: Date) ?Date {
     return null;
 }
 
-/// Parse month name and return as period.
-fn parseMonthName(str: []const u8, reference: Date) ?ParsedTemporal {
-    const months = [_]struct { full: []const u8, abbrev: []const u8, month: u8 }{
-        .{ .full = "january", .abbrev = "jan", .month = 1 },
-        .{ .full = "february", .abbrev = "feb", .month = 2 },
-        .{ .full = "march", .abbrev = "mar", .month = 3 },
-        .{ .full = "april", .abbrev = "apr", .month = 4 },
-        .{ .full = "may", .abbrev = "may", .month = 5 },
-        .{ .full = "june", .abbrev = "jun", .month = 6 },
-        .{ .full = "july", .abbrev = "jul", .month = 7 },
-        .{ .full = "august", .abbrev = "aug", .month = 8 },
-        .{ .full = "september", .abbrev = "sep", .month = 9 },
-        .{ .full = "october", .abbrev = "oct", .month = 10 },
-        .{ .full = "november", .abbrev = "nov", .month = 11 },
-        .{ .full = "december", .abbrev = "dec", .month = 12 },
-    };
+const month_table = [_]struct { full: []const u8, abbrev: []const u8, month: u8 }{
+    .{ .full = "january", .abbrev = "jan", .month = 1 },
+    .{ .full = "february", .abbrev = "feb", .month = 2 },
+    .{ .full = "march", .abbrev = "mar", .month = 3 },
+    .{ .full = "april", .abbrev = "apr", .month = 4 },
+    .{ .full = "may", .abbrev = "may", .month = 5 },
+    .{ .full = "june", .abbrev = "jun", .month = 6 },
+    .{ .full = "july", .abbrev = "jul", .month = 7 },
+    .{ .full = "august", .abbrev = "aug", .month = 8 },
+    .{ .full = "september", .abbrev = "sep", .month = 9 },
+    .{ .full = "october", .abbrev = "oct", .month = 10 },
+    .{ .full = "november", .abbrev = "nov", .month = 11 },
+    .{ .full = "december", .abbrev = "dec", .month = 12 },
+};
 
-    for (months) |m| {
-        if (std.mem.eql(u8, str, m.full) or std.mem.eql(u8, str, m.abbrev)) {
-            // If target month is current or past, use next year
-            const year: u16 = if (m.month <= reference.month) reference.year + 1 else reference.year;
-            return .{ .period = .{
-                .start = Date.initUnchecked(year, m.month, 1),
-                .granularity = .month,
-            } };
+/// Look up a month number from a name (full or abbreviation). Lowercase input expected.
+fn parseMonth(name: []const u8) ?u8 {
+    for (month_table) |m| {
+        if (std.mem.eql(u8, name, m.full) or std.mem.eql(u8, name, m.abbrev)) {
+            return m.month;
         }
     }
-
     return null;
+}
+
+/// Parse a bare month name and return as a month-granularity period.
+fn parseMonthName(str: []const u8, reference: Date) ?ParsedTemporal {
+    const month = parseMonth(str) orelse return null;
+    // If target month is current or past, use next year.
+    const year: u16 = if (month <= reference.month) reference.year + 1 else reference.year;
+    return .{ .period = .{
+        .start = Date.initUnchecked(year, month, 1),
+        .granularity = .month,
+    } };
+}
+
+/// Parse "<month-name> <day>" or "<day> <month-name>", with optional
+/// ordinal suffix on the day ("jan 15", "15 jan", "23rd dec", "dec 23rd").
+/// Year rolls forward when the target month is past, or the target month
+/// is current with the day already gone.
+fn parseMonthDay(str: []const u8, reference: Date) ?Date {
+    const space_idx = std.mem.indexOfScalar(u8, str, ' ') orelse return null;
+    const first = str[0..space_idx];
+    const second = str[space_idx + 1 ..];
+    if (std.mem.indexOfScalar(u8, second, ' ') != null) return null; // exactly two words
+
+    // <month> <day>
+    if (parseMonth(first)) |month| {
+        if (parseDayValue(second)) |day| {
+            return makeMonthDay(month, day, reference);
+        }
+    }
+    // <day> <month>
+    if (parseMonth(second)) |month| {
+        if (parseDayValue(first)) |day| {
+            return makeMonthDay(month, day, reference);
+        }
+    }
+    return null;
+}
+
+fn parseDayValue(str: []const u8) ?u8 {
+    // Strip optional ordinal suffix.
+    var s = str;
+    if (s.len >= 3) {
+        const suffix = s[s.len - 2 ..];
+        if (std.mem.eql(u8, suffix, "st") or
+            std.mem.eql(u8, suffix, "nd") or
+            std.mem.eql(u8, suffix, "rd") or
+            std.mem.eql(u8, suffix, "th"))
+        {
+            s = s[0 .. s.len - 2];
+        }
+    }
+    if (s.len == 0) return null;
+    return std.fmt.parseInt(u8, s, 10) catch null;
+}
+
+fn makeMonthDay(month: u8, day: u8, reference: Date) ?Date {
+    const year: u16 = year: {
+        if (month > reference.month) break :year reference.year;
+        if (month < reference.month) break :year reference.year + 1;
+        // Same month
+        if (day > reference.day) break :year reference.year;
+        break :year reference.year + 1;
+    };
+    return Date.init(year, month, day) catch null;
 }
 
 /// Parse ordinal day: "1st", "2nd", "3rd", "4th", "23rd", etc.
@@ -1683,4 +1849,130 @@ test "parse ISO datetime rejects malformed time" {
     const ref = timeRef(Date.initUnchecked(2024, 1, 1), 0, 0, 0);
     // Hour 25 invalid
     try std.testing.expectError(error.InvalidHour, parseWithReference("2024-06-15T25:00", ref));
+}
+
+// ============ DATE RANGE PARSING (Phase F.5 / #8) ============
+
+test "parse 'jan 15 to feb 1' as range" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("jan 15 to feb 1", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 2, 1), result.range.end);
+}
+
+test "parse 'jul 4' as date (this year if future)" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("jul 4", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 7, 4), result.date);
+}
+
+test "parse '4 jul' (day first) as date" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("4 jul", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 7, 4), result.date);
+}
+
+test "parse 'dec 23rd' with ordinal" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("dec 23rd", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 12, 23), result.date);
+}
+
+test "parse 'jan 15' when current month past day rolls year" {
+    const ref = Date.initUnchecked(2024, 1, 20);
+    const result = try parseWithReference("jan 15", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2025, 1, 15), result.date);
+}
+
+test "parse '2024-06-01 to 2024-06-30' as range" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-01 to 2024-06-30", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 1), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 30), result.range.end);
+}
+
+test "parse '2024-06-01..2024-06-30' ISO-style" {
+    const ref = Date.initUnchecked(2024, 1, 1);
+    const result = try parseWithReference("2024-06-01..2024-06-30", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 1), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 6, 30), result.range.end);
+}
+
+test "parse 'between today and friday'" {
+    const ref = Date.initUnchecked(2024, 1, 15); // Monday
+    const result = try parseWithReference("between today and friday", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 19), result.range.end);
+}
+
+test "parse 'from monday to friday' on a Wednesday" {
+    // On Wed, 'monday' → next Mon (1/22), 'friday' from Wed → upcoming Fri (1/19).
+    // 1/22 > 1/19, so EndBeforeStart bubbles up — the parse is well-formed
+    // but the endpoints don't form a valid range. Surfacing the error is
+    // the right call rather than silently swapping endpoints.
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    try std.testing.expectError(
+        error.EndBeforeStart,
+        parseWithReference("from monday to friday", ref),
+    );
+}
+
+test "parse 'next 7 days' range" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("next 7 days", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 21), result.range.end);
+    try std.testing.expectEqual(@as(i32, 7), result.range.days());
+}
+
+test "parse 'last 7 days' range" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("last 7 days", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 9), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.end);
+    try std.testing.expectEqual(@as(i32, 7), result.range.days());
+}
+
+test "parse 'next 1 day' range" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("next 1 day", ref);
+    // 1 day inclusive = just today
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.start);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.end);
+    try std.testing.expectEqual(@as(i32, 1), result.range.days());
+}
+
+test "parse 'next 2 weeks' range" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    const result = try parseWithReference("next 2 weeks", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 15), result.range.start);
+    // 14 days inclusive = today + 13 = 1/28
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 28), result.range.end);
+}
+
+test "parse rejects 'next 0 days' (zero range)" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    // 'next 0 days' returns null from parseRelativeRange → falls through.
+    // It then tries to parse "next 0 days" as offset / etc, all fail → InvalidFormat.
+    try std.testing.expectError(error.InvalidFormat, parseWithReference("next 0 days", ref));
+}
+
+test "parse range with end-before-start errors" {
+    const ref = Date.initUnchecked(2024, 1, 15);
+    try std.testing.expectError(
+        error.EndBeforeStart,
+        parseWithReference("2024-06-30..2024-06-01", ref),
+    );
+}
+
+test "parse 'next monday' still works (not confused with range)" {
+    const ref = Date.initUnchecked(2024, 1, 15); // Monday
+    const result = try parseWithReference("next monday", ref);
+    try std.testing.expectEqual(Date.initUnchecked(2024, 1, 22), result.date);
+}
+
+test "parse 'next week' still returns Period (not range)" {
+    const ref = Date.initUnchecked(2024, 1, 17); // Wednesday
+    const result = try parseWithReference("next week", ref);
+    try std.testing.expect(result == .period);
 }
