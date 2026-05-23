@@ -48,6 +48,12 @@ pub const startOfWeek = @import("arithmetic.zig").startOfWeek;
 pub const endOfWeek = @import("arithmetic.zig").endOfWeek;
 
 pub const formatRelative = @import("format.zig").formatRelative;
+pub const formatDate = @import("format.zig").formatDate;
+pub const formatTime = @import("format.zig").formatTime;
+pub const formatDateTime = @import("format.zig").formatDateTime;
+pub const formatZoned = @import("format.zig").formatZoned;
+pub const formatIso = @import("format.zig").formatIso;
+pub const FormatError = @import("format.zig").FormatError;
 pub const max_format_len = @import("format.zig").max_format_len;
 
 test {
